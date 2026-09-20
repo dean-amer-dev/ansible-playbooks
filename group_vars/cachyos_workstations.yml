@@ -136,6 +136,7 @@ cachyos_pacman_packages:
   - ripgrep
   - ufw
   - yubikey-manager
+  - open-iscsi
 
 # AUR packages — installed via paru after paru bootstrap
 cachyos_aur_packages:
