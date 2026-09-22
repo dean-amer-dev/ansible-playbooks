@@ -1,0 +1,10 @@
+# Managed by Ansible: playbooks/infrastructure/murderbot-nfs-export.yml
+# Do not edit by hand -- changes will be overwritten on next run.
+#
+# Unauthenticated (AUTH_SYS) NFS. Access control is the client IP allowlist
+# below only. See tdarr-archlinux-node-background.md in the Dean Obsidian
+# vault for why (no NFS username/password; auth deferred to a later SMB
+# phase).
+{% for export in nfs_exports %}
+{{ export }} {{ nfs_allowed_client }}({{ nfs_export_options }})
+{% endfor %}

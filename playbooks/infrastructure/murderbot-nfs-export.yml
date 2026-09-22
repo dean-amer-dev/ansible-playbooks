@@ -1,0 +1,57 @@
+---
+# Export murderbot's media storage over NFS so a remote k3s node (archlinux)
+# can mount /mnt/storage/movies and /mnt/storage/tv for Tdarr transcoding.
+#
+# See Projects/Media Server Stack/notes/tdarr-archlinux-node-background.md
+# in the Dean Obsidian vault for full background.
+#
+# Unauthenticated NFS (AUTH_SYS), access controlled only by the client IP
+# allowlist below. Real authentication (SMB+BWS credential, or NFSv4+Kerberos)
+# is deferred to phase 3 of the plan and is a protocol change, not a tweak to
+# this playbook. Scoped to archlinux's IP only — do not widen to the whole
+# LAN without updating this comment and the plan.
+#
+# Usage:
+#   ansible-playbook -i inventory/inventory.ini \
+#     playbooks/infrastructure/murderbot-nfs-export.yml
+
+- name: murderbot — export media storage over NFS
+  hosts: murderbot
+  become: true
+  gather_facts: true
+
+  vars:
+    nfs_allowed_client: "10.100.20.25" # archlinux
+    nfs_export_options: "rw,sync,no_subtree_check,root_squash"
+    nfs_exports:
+      - /mnt/storage/movies
+      - /mnt/storage/tv
+
+  tasks:
+    - name: Install nfs-kernel-server
+      ansible.builtin.apt:
+        name: nfs-kernel-server
+        state: present
+        # No update_cache: murderbot's cli.github.com apt repo has an
+        # unrelated expired/missing GPG key (NO_PUBKEY 5612B36462313325)
+        # that makes a forced refresh fail even though Debian's own repos
+        # are current. Out of scope for this playbook to fix.
+
+    - name: Template /etc/exports
+      ansible.builtin.template:
+        src: exports.j2
+        dest: /etc/exports
+        owner: root
+        group: root
+        mode: "0644"
+      register: exports_file
+
+    - name: Re-export filesystems (exportfs -ra)
+      ansible.builtin.command: exportfs -ra
+      when: exports_file.changed
+
+    - name: Ensure nfs-kernel-server is enabled and started
+      ansible.builtin.systemd:
+        name: nfs-kernel-server
+        enabled: true
+        state: started
