@@ -1,7 +1,7 @@
 ---
 - name: Resolve join token
   ansible.builtin.set_fact:
-    debian_k3s_token: "{{ hostvars['localhost'].debian_k3s_token | default('') }}"
+    debian_k3s_token: "{{ debian_k3s_token | default('') }}"
   no_log: true
 
 - name: Joiner without a BWS token reads the token the init host generated

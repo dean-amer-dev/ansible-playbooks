@@ -15,50 +15,6 @@
 # ssh password (hidden), installs the BWS key with ssh-copy-id, then carries on. The password
 # is also used as the sudo password if `sudo -n` doesn't work. Keys already installed -> no prompt.
 
-- name: Fetch secrets from BWS (control node)
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  vars_files:
-    - ../../roles/debian-k3s/defaults/main.yml
-  tasks:
-    - name: Fail fast if BWS_ACCESS_TOKEN is not exported
-      ansible.builtin.fail:
-        msg: "BWS_ACCESS_TOKEN must be set in the environment"
-      when: lookup('env', 'BWS_ACCESS_TOKEN') | length == 0
-
-    - name: Fetch secrets
-      ansible.builtin.command: bws secret get {{ item.id }} --output json
-      loop:
-        - { fact: debian_k3s_ssh_private_key, id: "{{ debian_k3s_bws_ssh_private_key_id }}" }
-        - { fact: debian_k3s_ssh_public_key, id: "{{ debian_k3s_bws_ssh_public_key_id }}" }
-      loop_control:
-        label: "{{ item.fact }}"
-      register: debian_k3s_bws
-      changed_when: false
-      no_log: true
-
-    - name: Publish as facts
-      ansible.builtin.set_fact:
-        "{{ item.item.fact }}": "{{ (item.stdout | from_json).value }}"
-      loop: "{{ debian_k3s_bws.results }}"
-      loop_control:
-        label: "{{ item.item.fact }}"
-      no_log: true
-
-    - name: Fetch shared join token (only if a BWS secret is configured)
-      ansible.builtin.command: bws secret get {{ debian_k3s_token_bws_id }} --output json
-      register: debian_k3s_token_raw
-      changed_when: false
-      no_log: true
-      when: debian_k3s_token_bws_id | length > 0
-
-    - name: Publish join token fact
-      ansible.builtin.set_fact:
-        debian_k3s_token: "{{ (debian_k3s_token_raw.stdout | from_json).value }}"
-      no_log: true
-      when: debian_k3s_token_bws_id | length > 0
-
 # Bootstrap ssh key access. Runs on the control node, once per targeted host (respects --limit).
 - name: Ensure key-based ssh works (prompt for password only if needed)
   hosts: debian_k3s
@@ -66,10 +22,39 @@
   gather_facts: false
   vars:
     ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/alex_id_ed25519"
+    bws_wanted: >-
+      {{ [{'fact': 'debian_k3s_ssh_private_key', 'id': debian_k3s_bws_ssh_private_key_id},
+          {'fact': 'debian_k3s_ssh_public_key', 'id': debian_k3s_bws_ssh_public_key_id}]
+         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else []) }}
     ssh_opts: >-
       -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes
       -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -i {{ ssh_key }}
   tasks:
+    - name: Fail fast if BWS_ACCESS_TOKEN is not exported
+      ansible.builtin.fail:
+        msg: "BWS_ACCESS_TOKEN must be set in the environment"
+      when: lookup('env', 'BWS_ACCESS_TOKEN') | length == 0
+      run_once: true
+
+    - name: Fetch ssh keys (and join token, if configured) from BWS
+      ansible.builtin.command: bws secret get {{ item.id }} --output json
+      loop: "{{ bws_wanted }}"
+      loop_control:
+        label: "{{ item.fact }}"
+      register: bws_fetched
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Publish secrets as facts for every targeted host
+      ansible.builtin.set_fact:
+        "{{ item.item.fact }}": "{{ (item.stdout | from_json).value }}"
+      loop: "{{ bws_fetched.results }}"
+      loop_control:
+        label: "{{ item.item.fact }}"
+      no_log: true
+      run_once: true
+
     - name: Probe key login
       ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} true
       register: key_probe
@@ -109,46 +94,58 @@
       no_log: true
       when: pw_prompt.user_input is defined
 
-    - name: Stage askpass helper and public key (control node, mode 0700)
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: ssh-bootstrap-
-      register: boot_dir
-      when: key_missing
-
-    - name: Write helper that reads the password from the environment (nothing secret on disk)
-      ansible.builtin.copy:
-        dest: "{{ boot_dir.path }}/askpass"
-        content: "#!/bin/sh\nprintf '%s\\n' \"$BOOTSTRAP_SSH_PASSWORD\"\n"
-        mode: "0700"
-      when: key_missing
-
-    - name: Write public key to stage dir
-      ansible.builtin.copy:
-        dest: "{{ boot_dir.path }}/key.pub"
-        content: "{{ hostvars['localhost'].debian_k3s_ssh_public_key | trim }}\n"
-        mode: "0600"
+    - name: Refuse to continue without a password (empty input / no terminal)
+      ansible.builtin.assert:
+        that: pw_prompt.user_input | default('') | length > 0
+        fail_msg: "No password entered (run this from an interactive terminal)."
       no_log: true
       when: key_missing
 
-    - name: Install key with ssh-copy-id
-      ansible.builtin.command: >-
-        ssh-copy-id -f -i {{ boot_dir.path }}/key.pub
-        -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1
-        {{ debian_k3s_user }}@{{ ansible_host }}
-      environment:
-        SSH_ASKPASS: "{{ boot_dir.path }}/askpass"
-        SSH_ASKPASS_REQUIRE: force
-        BOOTSTRAP_SSH_PASSWORD: "{{ pw_prompt.user_input }}"
-      register: copy_id
-      no_log: true
+    - name: Install the key (helper + key staged in a 0700 temp dir, always removed)
       when: key_missing
+      block:
+        - name: Stage askpass helper and public key (control node)
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: ssh-bootstrap-
+          register: boot_dir
 
-    - name: Remove stage dir
-      ansible.builtin.file:
-        path: "{{ boot_dir.path }}"
-        state: absent
-      when: key_missing
+        - name: Write helper that reads the password from the environment (nothing secret on disk)
+          ansible.builtin.copy:
+            dest: "{{ boot_dir.path }}/askpass"
+            content: "#!/bin/sh\nprintf '%s\\n' \"$BOOTSTRAP_SSH_PASSWORD\"\n"
+            mode: "0700"
+
+        - name: Write public key to stage dir
+          ansible.builtin.copy:
+            dest: "{{ boot_dir.path }}/key.pub"
+            content: "{{ debian_k3s_ssh_public_key | trim }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Install key with ssh-copy-id
+          ansible.builtin.command: >-
+            ssh-copy-id -f -i {{ boot_dir.path }}/key.pub
+            -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1
+            {{ debian_k3s_user }}@{{ ansible_host }}
+          environment:
+            SSH_ASKPASS: "{{ boot_dir.path }}/askpass"
+            SSH_ASKPASS_REQUIRE: force
+            BOOTSTRAP_SSH_PASSWORD: "{{ pw_prompt.user_input }}"
+          register: copy_id
+          failed_when: false
+          no_log: true
+
+        - name: Report ssh-copy-id failure (stderr only; it never contains the password)
+          ansible.builtin.fail:
+            msg: "ssh-copy-id to {{ ansible_host }} failed: {{ copy_id.stderr | default('') | trim }}"
+          when: copy_id.rc != 0
+      always:
+        - name: Remove stage dir
+          ansible.builtin.file:
+            path: "{{ boot_dir.path }}"
+            state: absent
+          when: boot_dir.path is defined
 
     - name: Verify key login now works
       ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} true

@@ -13,7 +13,7 @@
 - name: Authorize alex public key
   ansible.posix.authorized_key:
     user: "{{ debian_k3s_user }}"
-    key: "{{ hostvars['localhost'].debian_k3s_ssh_public_key }}"
+    key: "{{ debian_k3s_ssh_public_key }}"
     state: present
   no_log: true
 
@@ -25,8 +25,8 @@
     group: "{{ debian_k3s_user }}"
     mode: "{{ item.mode }}"
   loop:
-    - { name: alex_id_ed25519, mode: "0600", content: "{{ hostvars['localhost'].debian_k3s_ssh_private_key }}" }
-    - { name: alex_id_ed25519.pub, mode: "0644", content: "{{ hostvars['localhost'].debian_k3s_ssh_public_key }}" }
+    - { name: alex_id_ed25519, mode: "0600", content: "{{ debian_k3s_ssh_private_key }}" }
+    - { name: alex_id_ed25519.pub, mode: "0644", content: "{{ debian_k3s_ssh_public_key }}" }
   loop_control:
     label: "{{ item.name }}"
   no_log: true
