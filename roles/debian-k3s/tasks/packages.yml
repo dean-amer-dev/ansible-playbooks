@@ -1,0 +1,48 @@
+---
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ debian_k3s_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable chrony
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+
+- name: Load kernel modules at boot (k3s + OpenEBS LVM)
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: |
+      overlay
+      br_netfilter
+      dm_snapshot
+      dm_thin_pool
+    owner: root
+    group: root
+    mode: "0644"
+  register: debian_k3s_modules_conf
+
+- name: Load kernel modules now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: [overlay, br_netfilter, dm_snapshot, dm_thin_pool]
+
+- name: Kernel sysctls for k3s / Cilium
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-k3s.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { name: net.ipv4.ip_forward, value: "1" }
+    - { name: net.ipv6.conf.all.forwarding, value: "1" }
+    - { name: net.ipv4.conf.all.rp_filter, value: "2" }
+    - { name: net.ipv4.conf.default.rp_filter, value: "2" }
+    - { name: fs.inotify.max_user_watches, value: "1048576" }
+    - { name: fs.inotify.max_user_instances, value: "8192" }

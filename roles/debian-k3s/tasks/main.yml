@@ -1,0 +1,37 @@
+---
+- name: Assert target is Debian 13
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - ansible_distribution_major_version | int >= 13
+    fail_msg: "debian-k3s targets Debian 13+, got {{ ansible_distribution }} {{ ansible_distribution_version }}"
+  tags: [always]
+
+- name: Set hostname to inventory name (k3s node name derives from it)
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+  tags: [always]
+
+- name: SSH keys
+  ansible.builtin.import_tasks: ssh_keys.yml
+  tags: [ssh_keys]
+
+- name: Packages, time sync, kernel modules and sysctls
+  ansible.builtin.import_tasks: packages.yml
+  tags: [packages]
+
+- name: Headless (remove GUI) and disable auto-sleep
+  ansible.builtin.import_tasks: headless.yml
+  tags: [headless]
+
+- name: Performance power mode
+  ansible.builtin.import_tasks: power.yml
+  tags: [power]
+
+- name: LVM volume group for kube volumes
+  ansible.builtin.import_tasks: storage.yml
+  tags: [storage]
+
+- name: k3s server
+  ansible.builtin.import_tasks: k3s.yml
+  tags: [k3s]

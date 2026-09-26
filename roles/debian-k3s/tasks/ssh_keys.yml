@@ -1,0 +1,32 @@
+---
+# Keys come from BWS (fetched on the control node by the playbook's first play; the BWS token
+# never leaves it). Public key -> authorized_keys; the pair is also installed for alex so the
+# node can reach the others / GitHub with the same identity.
+- name: Ensure ~/.ssh exists
+  ansible.builtin.file:
+    path: "/home/{{ debian_k3s_user }}/.ssh"
+    state: directory
+    owner: "{{ debian_k3s_user }}"
+    group: "{{ debian_k3s_user }}"
+    mode: "0700"
+
+- name: Authorize alex public key
+  ansible.posix.authorized_key:
+    user: "{{ debian_k3s_user }}"
+    key: "{{ hostvars['localhost'].debian_k3s_ssh_public_key }}"
+    state: present
+  no_log: true
+
+- name: Install alex key pair
+  ansible.builtin.copy:
+    content: "{{ item.content | trim }}\n"
+    dest: "/home/{{ debian_k3s_user }}/.ssh/{{ item.name }}"
+    owner: "{{ debian_k3s_user }}"
+    group: "{{ debian_k3s_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: alex_id_ed25519, mode: "0600", content: "{{ hostvars['localhost'].debian_k3s_ssh_private_key }}" }
+    - { name: alex_id_ed25519.pub, mode: "0644", content: "{{ hostvars['localhost'].debian_k3s_ssh_public_key }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

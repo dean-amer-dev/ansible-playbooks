@@ -1,0 +1,4 @@
+---
+# Hosts in [debian_k3s]. Role defaults live in roles/debian-k3s/defaults/main.yml;
+# override per-cluster values here (no secrets - BWS only).
+ansible_user: alex

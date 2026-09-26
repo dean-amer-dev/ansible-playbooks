@@ -1,0 +1,62 @@
+---
+# Everything after the OS partitions -> one LVM VG (`debian_k3s_lvm_vg`) that OpenEBS Local PV LVM
+# carves volumes from. SAFETY: if the VG exists nothing below runs; an existing VG/PV is never
+# re-created or wiped. The PV partition is identified by GPT partlabel so re-runs find it.
+- name: Check for existing volume group
+  ansible.builtin.command: vgs --noheadings -o vg_name {{ debian_k3s_lvm_vg }}
+  register: debian_k3s_vg
+  changed_when: false
+  failed_when: false
+
+- name: Look for an already-created data partition (by partlabel)
+  ansible.builtin.stat:
+    path: "/dev/disk/by-partlabel/{{ debian_k3s_lvm_partlabel }}"
+  register: debian_k3s_pv_part
+  when: debian_k3s_vg.rc != 0
+
+- name: Read disk layout including free space
+  ansible.builtin.command: parted -ms {{ debian_k3s_lvm_disk }} unit B print free
+  register: debian_k3s_parted
+  changed_when: false
+  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
+
+- name: Work out the trailing free region and next partition number
+  ansible.builtin.set_fact:
+    debian_k3s_free_line: "{{ (debian_k3s_parted.stdout_lines | select('search', ':free;$') | list | last).split(':') }}"
+    debian_k3s_next_part: "{{ (debian_k3s_parted.stdout_lines | select('match', '^[0-9]+:') | reject('search', ':free;$') | map('split', ':') | map('first') | map('int') | list + [0]) | max + 1 }}"
+  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
+
+- name: Fail if there is not enough free space for the data VG
+  ansible.builtin.assert:
+    that:
+      - (debian_k3s_free_line[3] | regex_replace('B$', '') | int) >= (debian_k3s_lvm_min_free_gib | int * 1073741824)
+    fail_msg: >-
+      No VG '{{ debian_k3s_lvm_vg }}' and no partlabel '{{ debian_k3s_lvm_partlabel }}', and the last free region
+      on {{ debian_k3s_lvm_disk }} is only {{ (debian_k3s_free_line[3] | regex_replace('B$', '') | int / 1073741824) | round(1) }} GiB
+      (< {{ debian_k3s_lvm_min_free_gib }} GiB). Not creating anything. Set debian_k3s_lvm_disk correctly or free space first.
+  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
+
+- name: Create data partition in the free space
+  community.general.parted:
+    device: "{{ debian_k3s_lvm_disk }}"
+    label: gpt
+    number: "{{ debian_k3s_next_part }}"
+    name: "{{ debian_k3s_lvm_partlabel }}"
+    part_start: "{{ ((debian_k3s_free_line[1] | regex_replace('B$', '') | int / 1048576) | round(0, 'ceil') | int) }}MiB"
+    part_end: 100%
+    flags: [lvm]
+    state: present
+  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
+  register: debian_k3s_new_part
+
+- name: Let udev publish the new partition
+  ansible.builtin.command: udevadm settle
+  changed_when: false
+  when: debian_k3s_new_part is changed
+
+- name: Create the volume group on the data partition
+  community.general.lvg:
+    vg: "{{ debian_k3s_lvm_vg }}"
+    pvs: "/dev/disk/by-partlabel/{{ debian_k3s_lvm_partlabel }}"
+    state: present
+  when: debian_k3s_vg.rc != 0

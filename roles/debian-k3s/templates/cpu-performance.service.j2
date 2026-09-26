@@ -1,0 +1,12 @@
+# Managed by Ansible (role debian-k3s)
+[Unit]
+Description=Set CPU/platform power mode to performance
+After=multi-user.target power-profiles-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/set-performance-power-mode
+
+[Install]
+WantedBy=multi-user.target

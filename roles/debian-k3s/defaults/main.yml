@@ -1,0 +1,89 @@
+---
+# Role: debian-k3s
+# Baseline for headless Debian 13 boxes that become k3s HA servers (embedded etcd).
+# Logical task groups (each has a tag): ssh_keys, packages, headless, power, storage, k3s.
+
+debian_k3s_user: alex
+
+# --- ssh_keys (BWS secret UUIDs; not secret themselves) ---
+debian_k3s_bws_ssh_private_key_id: "fb0a8c45-a020-4c71-b92f-b44000fbac08"  # alex-id-ed25519-private-key (project: servers)
+debian_k3s_bws_ssh_public_key_id: "79f4be07-afcf-48e2-b802-b44000fbc272"   # alex-id-ed25519-public-key  (project: servers)
+
+# --- packages ---
+debian_k3s_packages:
+  - curl
+  - ca-certificates
+  - gnupg
+  - jq
+  - lvm2
+  - parted
+  - xfsprogs
+  - e2fsprogs
+  - iptables
+  - ipset
+  - conntrack
+  - socat
+  - ethtool
+  - chrony
+  - linux-cpupower
+  - python3-kubernetes  # kubernetes.core modules for later bootstrap steps
+  - python3-yaml
+
+# Packages that must survive GUI removal + autoremove (would lock us out of the box).
+debian_k3s_keep_packages:
+  - openssh-server
+  - sudo
+  - network-manager
+  - netplan.io
+  - systemd-resolved
+  - ifupdown
+  - wpasupplicant
+
+# --- headless: anything matching these (dpkg globs) is purged if installed ---
+debian_k3s_gui_packages:
+  - "task-*-desktop"
+  - gnome-shell
+  - gdm3
+  - lightdm
+  - sddm
+  - xdm
+  - lxdm
+  - slick-greeter
+  - xfce4
+  - xfce4-session
+  - plasma-desktop
+  - kde-plasma-desktop
+  - cinnamon
+  - mate-desktop-environment
+  - lxde
+  - lxqt
+  - xserver-xorg-core
+  - xwayland
+
+# --- storage ---
+# Everything past the OS partitions goes into one LVM VG (OpenEBS Local PV LVM consumes it later).
+# An existing VG is NEVER touched. The PV partition is found by GPT partlabel, else created in
+# the trailing free space of the disk.
+debian_k3s_lvm_disk: /dev/nvme0n1
+debian_k3s_lvm_vg: data
+debian_k3s_lvm_partlabel: k3s-data
+debian_k3s_lvm_min_free_gib: 50
+
+# --- k3s ---
+debian_k3s_version: "v1.36.4+k3s1"   # stable channel 2026-09-26; pinned
+debian_k3s_init_host: "{{ groups['debian_k3s'][0] }}"
+debian_k3s_node_ip: "{{ ansible_host }}"
+debian_k3s_api_hostname: k3s.amer.dev
+debian_k3s_extra_tls_sans: []        # add the API VIP here once picked (Phase 0)
+debian_k3s_cluster_cidr: "10.44.0.0/16"
+debian_k3s_service_cidr: "10.45.0.0/16"
+debian_k3s_cluster_dns: "10.45.0.10"
+debian_k3s_kube_reserved: "cpu=1,memory=2Gi"
+debian_k3s_system_reserved: "cpu=1,memory=2Gi"
+debian_k3s_eviction_hard: "memory.available<1Gi,nodefs.available<10%"
+debian_k3s_cpu_weight: 1000
+debian_k3s_etcd_snapshot_schedule: "0 */6 * * *"
+debian_k3s_etcd_snapshot_retention: 28
+# Optional BWS secret UUID holding the shared join token. Empty -> k3s generates one on the
+# init host and joiners read it from there.
+debian_k3s_token_bws_id: ""
