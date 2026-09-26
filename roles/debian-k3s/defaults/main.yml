@@ -62,6 +62,13 @@ debian_k3s_lvm_disk: /dev/nvme0n1
 debian_k3s_lvm_vg: data
 debian_k3s_lvm_partlabel: k3s-data
 debian_k3s_lvm_min_free_gib: 50
+# OS gets exactly this much; everything else in the VG is the kube volume pool.
+debian_k3s_os_size_gib: 128
+debian_k3s_os_layout:   # must sum to debian_k3s_os_size_gib (k3s data lives in /var, so it is big)
+  root: 20g
+  var: 40g
+  tmp: 4g
+  home: 64g
 
 # --- k3s ---
 debian_k3s_version: "v1.36.4+k3s1"   # stable channel 2026-09-26; pinned

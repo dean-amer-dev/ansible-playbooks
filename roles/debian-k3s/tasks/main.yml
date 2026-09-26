@@ -32,6 +32,10 @@
   ansible.builtin.import_tasks: storage.yml
   tags: [storage]
 
+- name: Preflight - is this node ready for k3s?
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [preflight, k3s]
+
 - name: k3s server
   ansible.builtin.import_tasks: k3s.yml
   tags: [k3s]
