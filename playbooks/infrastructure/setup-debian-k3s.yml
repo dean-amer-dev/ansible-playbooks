@@ -24,5 +24,7 @@
   become: true
   gather_facts: true
   serial: 1
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # su keeps alex's PATH (no sbin)
   roles:
     - role: "{{ playbook_dir }}/../../roles/debian-k3s"

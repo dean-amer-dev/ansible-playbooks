@@ -13,6 +13,8 @@
   hosts: debian_k3s
   become: true
   gather_facts: false
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # su keeps alex's PATH (no sbin)
   tasks:
     - name: Run the role's ssh_keys tasks with passwordless sudo on
       ansible.builtin.include_role:

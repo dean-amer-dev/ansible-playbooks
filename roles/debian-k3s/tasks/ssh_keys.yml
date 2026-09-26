@@ -31,6 +31,20 @@
     label: "{{ item.name }}"
   no_log: true
 
+# sudo itself may be missing on a fresh install (Debian's installer skips it when root has a password).
+- name: Ensure sudo is installed
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure alex is in the sudo group
+  ansible.builtin.user:
+    name: "{{ debian_k3s_user }}"
+    groups: sudo
+    append: true
+
 # Opt-in: lets automation (and Claude, with Alex's per-run permission) run `sudo` without a
 # password. Off by default. Validated with visudo so a typo can never lock sudo out.
 - name: Passwordless sudo for alex

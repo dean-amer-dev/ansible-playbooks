@@ -57,33 +57,24 @@
         msg: "{{ inventory_hostname }} ({{ ansible_host }}): {{ key_probe.stderr | trim }}"
       when: key_probe.rc != 0 and 'Permission denied' not in key_probe.stderr
 
-    - name: Probe passwordless sudo (only where key login works)
-      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} sudo -n true
-      register: sudo_probe
-      changed_when: false
-      failed_when: false
-      when: key_probe.rc == 0
-
-    - name: Work out who needs the password
+    - name: Work out who needs the ssh password
       ansible.builtin.set_fact:
         key_missing: "{{ key_probe.rc != 0 }}"
-        sudo_needs_password: "{{ key_probe.rc == 0 and sudo_probe.rc != 0 }}"
+        alex_pw: ""
 
     - name: Prompt for alex's ssh password (hidden; asked once for all hosts)
       ansible.builtin.pause:
-        prompt: "alex's ssh key is not installed (or sudo needs a password) - enter alex's password"
+        prompt: "alex's ssh key is not installed on some hosts - enter alex's password (input hidden)"
         echo: false
       run_once: true
       register: pw_prompt
       no_log: true
       when: ansible_play_hosts | map('extract', hostvars, 'key_missing') | select | list | length > 0
-            or ansible_play_hosts | map('extract', hostvars, 'sudo_needs_password') | select | list | length > 0
 
-    - name: Keep the password for sudo on this run only
+    - name: Remember the password for this run
       ansible.builtin.set_fact:
-        ansible_become_password: "{{ pw_prompt.user_input }}"
+        alex_pw: "{{ pw_prompt.user_input | default('') }}"
       no_log: true
-      when: pw_prompt.user_input is defined
 
     - name: Refuse to continue without a password (empty input / no terminal)
       ansible.builtin.assert:
@@ -142,3 +133,73 @@
       ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} true
       changed_when: false
       when: key_missing
+
+    # ---- sudo: now that key login works everywhere, find out how each host can escalate ----
+    - name: Is sudo installed?
+      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} command -v sudo
+      register: sudo_present
+      changed_when: false
+      failed_when: false
+
+    - name: Does sudo work without a password?
+      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} sudo -n true
+      register: sudo_nopass
+      changed_when: false
+      failed_when: false
+      when: sudo_present.rc == 0
+
+    - name: Classify sudo state
+      ansible.builtin.set_fact:
+        sudo_missing: "{{ sudo_present.rc != 0 }}"
+        sudo_needs_password: "{{ sudo_present.rc == 0 and sudo_nopass.rc != 0 }}"
+
+    - name: Report sudo state
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ 'sudo NOT installed (will escalate with su)' if sudo_missing else ('sudo needs a password' if sudo_needs_password else 'passwordless sudo OK') }}"
+
+    - name: Prompt for alex's password for sudo (hidden; only if not entered already)
+      ansible.builtin.pause:
+        prompt: "sudo needs a password on some hosts - enter alex's password (input hidden)"
+        echo: false
+      run_once: true
+      register: sudo_pw_prompt
+      no_log: true
+      when:
+        - ansible_play_hosts | map('extract', hostvars, 'sudo_needs_password') | select | list | length > 0
+        - ansible_play_hosts | map('extract', hostvars, 'alex_pw') | select | list | length == 0
+
+    - name: Prompt for root's password (sudo is not installed on some hosts; su is used to install it)
+      ansible.builtin.pause:
+        prompt: "sudo is not installed on some hosts - enter ROOT's password (input hidden)"
+        echo: false
+      run_once: true
+      register: root_pw_prompt
+      no_log: true
+      when: ansible_play_hosts | map('extract', hostvars, 'sudo_missing') | select | list | length > 0
+
+    - name: Remember a sudo password entered just now
+      ansible.builtin.set_fact:
+        alex_pw: "{{ sudo_pw_prompt.user_input }}"
+      no_log: true
+      when: sudo_pw_prompt.user_input is defined and sudo_pw_prompt.user_input | length > 0
+
+    - name: Escalate with sudo + alex's password where sudo needs one
+      ansible.builtin.set_fact:
+        ansible_become_password: "{{ alex_pw | default(sudo_pw_prompt.user_input | default('')) }}"
+      no_log: true
+      when: sudo_needs_password
+
+    - name: Escalate with su + root's password where sudo is missing
+      ansible.builtin.set_fact:
+        ansible_become_method: su
+        ansible_become_user: root
+        ansible_become_password: "{{ root_pw_prompt.user_input | default('') }}"
+      no_log: true
+      when: sudo_missing
+
+    - name: Refuse to go on without the password it needs
+      ansible.builtin.assert:
+        that: (ansible_become_password | default('')) | length > 0
+        fail_msg: "{{ inventory_hostname }} needs a password to escalate but none was entered (run from an interactive terminal)."
+      no_log: false
+      when: sudo_needs_password or sudo_missing
