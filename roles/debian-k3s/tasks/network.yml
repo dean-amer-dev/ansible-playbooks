@@ -3,7 +3,8 @@
 # The rename is a systemd .link file matched by MAC, so it survives kernel/driver changes; it takes effect at the
 # next boot. Anything that refers to the NIC BY NAME must follow it, or the box boots with no network:
 #   - ifupdown (/etc/network/interfaces): rewritten here
-#   - NetworkManager: only OK if the active profile is not bound to an interface name (asserted here)
+#   - NetworkManager: not used on these nodes (all boxes run ifupdown+dhcpcd); disabled+masked without stopping,
+#     purged on the first run after the reboot
 # Addressing is unchanged (DHCP reservation, same IPs); static IP / public resolvers are a separate change.
 
 - name: Find the NIC that carries the node IP
@@ -44,22 +45,51 @@
     replace: lan0
   when: debian_k3s_ifupdown.stat.exists and debian_k3s_nic_facts.device != 'lan0'
 
-- name: Is NetworkManager managing this NIC?
-  ansible.builtin.command: nmcli -t -f NAME,DEVICE connection show --active
+- name: Does ifupdown already have a stanza for lan0 (outside our managed block)?
+  ansible.builtin.shell: sed '/ANSIBLE MANAGED lan0/,/ANSIBLE MANAGED lan0/d' /etc/network/interfaces | grep -c '^iface lan0 inet dhcp' || true
+  register: debian_k3s_lan0_stanza
+  changed_when: false
+  when: debian_k3s_ifupdown.stat.exists
+
+- name: Ensure ifupdown has a DHCP stanza for lan0 (nodes installed with a desktop had NetworkManager and an empty file)
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    marker: "# {mark} ANSIBLE MANAGED lan0"
+    block: |
+      allow-hotplug lan0
+      iface lan0 inet dhcp
+      iface lan0 inet6 auto
+  when: debian_k3s_ifupdown.stat.exists and (debian_k3s_lan0_stanza.stdout | trim) == '0'
+
+- name: Every node uses ifupdown + dhcpcd, never NetworkManager. Is it installed?
+  ansible.builtin.command: dpkg-query -W -f='${db:Status-Abbrev}' network-manager
+  register: debian_k3s_nm_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Disable and mask NetworkManager WITHOUT stopping it (the live network keeps working; ifupdown takes over at boot)
+  ansible.builtin.systemd:
+    name: NetworkManager
+    enabled: false
+    masked: true
+  when: debian_k3s_nm_pkg.stdout.startswith('ii')
+
+- name: Is NetworkManager still running (i.e. we have not rebooted since disabling it)?
+  ansible.builtin.command: systemctl is-active NetworkManager
   register: debian_k3s_nm_active
   changed_when: false
   failed_when: false
 
-- name: NetworkManager profile bound to the NIC by name would lose the network after the rename
-  ansible.builtin.command: nmcli -g connection.interface-name connection show "{{ item.split(':')[0] }}"
-  register: debian_k3s_nm_bound
-  changed_when: false
-  failed_when: debian_k3s_nm_bound.stdout | trim | length > 0
-  loop: "{{ debian_k3s_nm_active.stdout_lines | select('search', ':' ~ debian_k3s_nic_facts.device ~ '$') | list }}"
-  when: debian_k3s_nic_facts.device != 'lan0'
+- name: Purge NetworkManager once it is no longer running (purging a running one would stop it and drop the DHCP client)
+  ansible.builtin.apt:
+    name: network-manager
+    state: absent
+    purge: true
+    autoremove: false
+  when: debian_k3s_nm_pkg.stdout.startswith('ii') and debian_k3s_nm_active.stdout != 'active'
 
-- name: Nothing else in /etc/network or NetworkManager may still name the old interface
-  ansible.builtin.shell: grep -rIl -w '{{ debian_k3s_nic_facts.device }}' /etc/network /etc/NetworkManager 2>/dev/null || true
+- name: Nothing in /etc/network may still name the old interface
+  ansible.builtin.shell: grep -rIl -w '{{ debian_k3s_nic_facts.device }}' /etc/network 2>/dev/null || true
   register: debian_k3s_old_name_refs
   changed_when: false
   failed_when: debian_k3s_old_name_refs.stdout | trim | length > 0
