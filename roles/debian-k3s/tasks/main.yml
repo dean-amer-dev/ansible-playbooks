@@ -12,6 +12,13 @@
     name: "{{ inventory_hostname }}"
   tags: [always]
 
+- name: Keep /etc/hosts in step with the hostname (else sudo warns "unable to resolve host")
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+  tags: [always]
+
 - name: SSH keys
   ansible.builtin.import_tasks: ssh_keys.yml
   tags: [ssh_keys]

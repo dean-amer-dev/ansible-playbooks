@@ -88,6 +88,16 @@
       {{ ((debian_k3s_pool_free.stdout | trim | int) / 1073741824) | round(1) }} GiB free (< {{ debian_k3s_lvm_min_free_gib }} GiB).
       Nothing was created.
 
+- name: Refuse to touch storage if /home is in fstab but not mounted
+  ansible.builtin.shell: grep -qE '^[^#]\S+\s+/home\s' /etc/fstab && ! mountpoint -q /home && echo UNMOUNTED || echo ok
+  register: debian_k3s_home_mounted
+  changed_when: false
+
+- name: Fail clearly if /home is not mounted
+  ansible.builtin.assert:
+    that: debian_k3s_home_mounted.stdout == 'ok'
+    fail_msg: "/home is in /etc/fstab but is NOT mounted on {{ inventory_hostname }}; run `mount /home` (or reboot) and re-run. Not touching storage."
+
 # --- OS layout: exactly debian_k3s_os_size_gib for the OS, everything else is the kube pool ---
 # / /var /tmp grow online. /home cannot shrink while mounted, so it is MIGRATED: new smaller LV,
 # rsync, fstab repoint (takes effect at the next reboot, done by Alex), then the next run removes
@@ -233,6 +243,8 @@
           /home has been copied to LV '{{ debian_k3s_lv['/home'].lv }}2' and fstab updated. REBOOT {{ inventory_hostname }} (Alex does
           this), then re-run the playbook: it removes the old {{ debian_k3s_lv['/home'].lv }} LV and the pool grows.
 
+# NOTE: the new LV keeps the name `<home>2`. Do NOT lvrename a mounted LV: udev recreates the device node and
+# systemd can unmount /home behind our back (seen on 3 hosts: sessions dropped, ~/.ssh vanished, key login refused).
 - name: Finish the /home migration after the reboot
   when: not (debian_k3s_home_migrate | bool) and '/home' in debian_k3s_lv and debian_k3s_lv['/home'].lv is match('^.+2$')
   block:
@@ -247,10 +259,6 @@
         state: absent
         force: true
       when: debian_k3s_old_home.stat.exists
-    - name: Give the new LV the plain name (mounts are by UUID, so this is safe online)
-      ansible.builtin.command: lvrename {{ debian_k3s_lv['/home'].vg }} {{ debian_k3s_lv['/home'].lv }} {{ debian_k3s_lv['/home'].lv[:-1] }}
-      register: debian_k3s_home_rename
-      changed_when: true
 
 - name: Re-read free space in the storage VG
   ansible.builtin.command: vgs --noheadings --units b --nosuffix -o vg_free {{ debian_k3s_storage_vg }}
