@@ -75,7 +75,7 @@ Use this when you run `ansible-playbook` **on the laptop itself** (same pattern 
 
 ## Debian k3s nodes (Infrastructure 2.0: `debian_k3s` group)
 
-Three identical GMKtec boxes (Debian 13, Ryzen 7 7730U, 28 GiB RAM, 477 GB NVMe) that become the new HA k3s
+Three identical GMKtec boxes (Debian 13, Ryzen 7 7730U, 32 GiB RAM (28.3 GiB visible; 3 GiB iGPU carve-out), 477 GB NVMe) that become the new HA k3s
 cluster. Role `roles/debian-k3s`, playbooks under `playbooks/infrastructure/`. Only secret input is
 `BWS_ACCESS_TOKEN` in the environment.
 
