@@ -73,6 +73,34 @@ Use this when you run `ansible-playbook` **on the laptop itself** (same pattern 
 
 **Bitwarden on workstation hosts:** the play installs **Bitwarden Password Manager** (`bitwarden`), the **vault CLI** (`bitwarden-cli`, command `bw`), and **Bitwarden Secrets Manager CLI** (`bws` to `/usr/local/bin/bws`) for automation and Komodo compose rendering.
 
+## Debian k3s nodes (Infrastructure 2.0: `debian_k3s` group)
+
+Three identical GMKtec boxes (Debian 13, Ryzen 7 7730U, 28 GiB RAM, 477 GB NVMe) that become the new HA k3s
+cluster. Role `roles/debian-k3s`, playbooks under `playbooks/infrastructure/`. Only secret input is
+`BWS_ACCESS_TOKEN` in the environment.
+
+| Playbook | What it does |
+|----------|--------------|
+| `debian-k3s-access.yml` | ssh key (from BWS) + passwordless sudo. Prompts (hidden) only if needed: alex's password, or **root's** if `sudo` isn't installed (then `su` is used). |
+| `debian-k3s-ssh-bootstrap.yml` | The key/sudo probing part only (imported by the others). |
+| `setup-debian-k3s.yml` | Everything: keys, packages/sysctls/modules, swap off, GUI removal, sleep disabled, performance power mode, storage layout, preflight, k3s server. |
+
+```bash
+export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/debian-k3s-access.yml            # first contact
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --skip-tags k3s   # baseline only
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --tags preflight  # read-only readiness check
+```
+
+Tags: `ssh_keys packages headless power storage preflight k3s`. The k3s step is written but has not been run yet.
+
+**Storage:** the OS gets exactly 128G (`/` 20G, `/var` 40G, `/tmp` 4G, `/home` 64G); the rest of the VG (~347 GiB)
+is the pool for OpenEBS Local PV LVM. `/home` cannot shrink while mounted, so it is migrated to a new LV; the
+**first run ends with "REBOOT needed"** and the **next run after the reboot** removes the old LV. Reboot nodes one
+at a time. Existing VG contents are never wiped or shrunk.
+
+**Not included yet:** static IP / `lan0` rename, Cilium, kube-vip, CoreDNS, ArgoCD (nodes stay `NotReady` until Cilium).
+
 ## Prerequisites (any control OS)
 
 - Ansible on the control machine (above: Arch packages; elsewhere: your distro’s `ansible` / `ansible-core`)
