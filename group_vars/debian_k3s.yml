@@ -14,3 +14,9 @@ debian_k3s_token_bws_id: ""
 
 # Passwordless sudo for alex on these nodes (drop-in /etc/sudoers.d, visudo-validated).
 debian_k3s_passwordless_sudo: false
+
+# API VIP (kube-vip, added later) - in k3s tls-san so the serving cert is valid for it from the start.
+# Lives in the "k3s Reserved" block 10.100.20.161-200 (outside DHCP .40-.160 and the legacy MetalLB pools .201-.250).
+debian_k3s_api_vip: "10.100.20.161"
+debian_k3s_extra_tls_sans:
+  - "{{ debian_k3s_api_vip }}"
