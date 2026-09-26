@@ -1,0 +1,32 @@
+---
+# Performance power mode: CPU governor + EPP + ACPI platform profile + power-profiles-daemon
+# (each only if this box has it). Script is idempotent; unit re-applies on every boot.
+- name: Install power-mode script
+  ansible.builtin.template:
+    src: set-performance-power-mode.sh.j2
+    dest: /usr/local/sbin/set-performance-power-mode
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install boot-time unit
+  ansible.builtin.template:
+    src: cpu-performance.service.j2
+    dest: /etc/systemd/system/cpu-performance.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so the unit is known
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable unit
+  ansible.builtin.systemd:
+    name: cpu-performance.service
+    enabled: true
+
+- name: Apply performance mode now
+  ansible.builtin.command: /usr/local/sbin/set-performance-power-mode
+  register: debian_k3s_power
+  changed_when: "'CHANGED' in debian_k3s_power.stdout"

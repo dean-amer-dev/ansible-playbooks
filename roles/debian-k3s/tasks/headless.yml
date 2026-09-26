@@ -1,0 +1,95 @@
+---
+# 1. Remove any installed GUI / display manager. 2. Kill every auto-sleep path.
+
+- name: Detect installed GUI packages
+  ansible.builtin.shell: |
+    dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' {{ debian_k3s_gui_packages | map('quote') | join(' ') }} 2>/dev/null \
+      | awk '$1 ~ /^i/ {print $2}' | sort -u
+  register: debian_k3s_gui_found
+  changed_when: false
+  failed_when: false
+
+- name: Report detected GUI packages
+  ansible.builtin.debug:
+    msg: "{{ debian_k3s_gui_found.stdout_lines | default([]) | length }} GUI package(s) installed: {{ debian_k3s_gui_found.stdout_lines }}"
+
+- name: Pin lockout-critical packages as manually installed before autoremove
+  ansible.builtin.shell: |
+    for p in {{ debian_k3s_keep_packages | join(' ') }}; do
+      if dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null | grep -q '^i'; then
+        if apt-mark showauto "$p" | grep -qx "$p"; then apt-mark manual "$p" >/dev/null && echo "pinned $p"; fi
+      fi
+    done
+  register: debian_k3s_pin
+  changed_when: "'pinned' in debian_k3s_pin.stdout"
+  when: debian_k3s_gui_found.stdout_lines | length > 0
+
+- name: Purge GUI packages and their orphaned dependencies
+  ansible.builtin.apt:
+    name: "{{ debian_k3s_gui_found.stdout_lines }}"
+    state: absent
+    purge: true
+    autoremove: true
+  when: debian_k3s_gui_found.stdout_lines | length > 0
+
+- name: Read default systemd target
+  ansible.builtin.command: systemctl get-default
+  register: debian_k3s_default_target
+  changed_when: false
+
+- name: Boot to multi-user (no graphical target)
+  ansible.builtin.command: systemctl set-default multi-user.target
+  when: debian_k3s_default_target.stdout != 'multi-user.target'
+
+# --- auto-sleep ---
+- name: Mask sleep/suspend/hibernate targets
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+    - suspend-then-hibernate.target
+
+- name: Ensure systemd drop-in directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/sleep.conf.d
+    - /etc/systemd/logind.conf.d
+
+- name: Forbid sleep in systemd-sleep config
+  ansible.builtin.copy:
+    dest: /etc/systemd/sleep.conf.d/10-no-sleep.conf
+    content: |
+      [Sleep]
+      AllowSuspend=no
+      AllowHibernation=no
+      AllowSuspendThenHibernate=no
+      AllowHybridSleep=no
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Ignore idle/lid/power-key sleep triggers in logind
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/10-no-sleep.conf
+    content: |
+      [Login]
+      IdleAction=ignore
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload logind

@@ -1,0 +1,76 @@
+---
+# Read-only readiness checks. Fails with ALL problems listed, changes nothing.
+- name: Gather facts for the checks
+  ansible.builtin.setup:
+    gather_subset: [min, hardware, network]
+
+- name: cgroup v2 controllers k3s needs
+  ansible.builtin.command: cat /sys/fs/cgroup/cgroup.controllers
+  register: pf_cgroup
+  changed_when: false
+  failed_when: false
+
+- name: Kernel BPF support (Cilium)
+  ansible.builtin.shell: grep -E '^CONFIG_(BPF_SYSCALL|CGROUP_BPF|BPF_JIT|NET_CLS_BPF|NET_SCH_INGRESS)=' /boot/config-$(uname -r) | wc -l
+  register: pf_bpf
+  changed_when: false
+  failed_when: false
+
+- name: Kernel modules and sysctls
+  ansible.builtin.shell: |
+    for m in overlay br_netfilter dm_snapshot dm_thin_pool; do lsmod | grep -q "^$m " || echo "module-missing:$m"; done
+    [ "$(sysctl -n net.ipv4.ip_forward)" = 1 ] || echo "ip_forward-off"
+    [ -z "$(swapon --noheadings --show=NAME)" ] || echo "swap-on"
+  register: pf_kern
+  changed_when: false
+
+- name: Ports k3s/etcd need must be free
+  ansible.builtin.shell: ss -Hltn '( sport = :6443 or sport = :2379 or sport = :2380 or sport = :10250 )' | wc -l
+  register: pf_ports
+  changed_when: false
+  failed_when: false
+
+- name: Node IP is on this host
+  ansible.builtin.set_fact:
+    pf_ip_ok: "{{ debian_k3s_node_ip in ansible_facts.all_ipv4_addresses }}"
+
+- name: Time sync
+  ansible.builtin.command: chronyc tracking
+  register: pf_time
+  changed_when: false
+  failed_when: false
+
+- name: Can reach the k3s installer and release host
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    method: HEAD
+    timeout: 15
+  loop: [https://get.k3s.io, https://github.com/k3s-io/k3s/releases]
+  register: pf_net
+  failed_when: false
+
+- name: Free space on /var and in the pool
+  ansible.builtin.shell: df --output=avail -B1G /var | tail -1 | tr -d ' '
+  register: pf_var_free
+  changed_when: false
+
+- name: Collect problems
+  ansible.builtin.set_fact:
+    pf_problems: >-
+      {{ ([] if ('cpu' in pf_cgroup.stdout and 'memory' in pf_cgroup.stdout and 'pids' in pf_cgroup.stdout) else ['cgroup v2 cpu/memory/pids controllers not available: ' ~ pf_cgroup.stdout])
+       + ([] if (pf_bpf.stdout | trim | int) >= 4 else ['kernel BPF options incomplete for Cilium (' ~ pf_bpf.stdout | trim ~ '/5 found)'])
+       + pf_kern.stdout_lines
+       + ([] if (pf_ports.stdout | trim | int) == 0 or (debian_k3s_installed_ok | default(false)) else ['a k3s/etcd port is already in use'])
+       + ([] if pf_ip_ok else ['node IP ' ~ debian_k3s_node_ip ~ ' is not on this host (set debian_k3s_node_ip)'])
+       + ([] if 'Leap status     : Normal' in pf_time.stdout else ['chrony not synchronised yet'])
+       + (pf_net.results | rejectattr('status', 'defined') | map(attribute='item') | map('regex_replace', '^(.*)$', 'unreachable: \\1') | list)
+       + ([] if (pf_var_free.stdout | int) >= 25 else ['/var has under 25 GiB free']) }}
+
+- name: Report
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ 'READY for k3s' if pf_problems | length == 0 else 'NOT READY: ' ~ pf_problems | join('; ') }}"
+
+- name: Fail if not ready
+  ansible.builtin.assert:
+    that: pf_problems | length == 0
+    fail_msg: "{{ inventory_hostname }} not ready for k3s: {{ pf_problems | join('; ') }}"

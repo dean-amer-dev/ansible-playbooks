@@ -1,0 +1,16 @@
+---
+# Hosts in [debian_k3s]. Role defaults live in roles/debian-k3s/defaults/main.yml.
+# No secrets here - BWS only (these UUIDs are identifiers, not secrets).
+ansible_user: alex
+debian_k3s_user: "{{ ansible_user }}"
+
+# BWS secrets (project: servers)
+debian_k3s_bws_ssh_private_key_id: "fb0a8c45-a020-4c71-b92f-b44000fbac08"  # alex-id-ed25519-private-key
+debian_k3s_bws_ssh_public_key_id: "79f4be07-afcf-48e2-b802-b44000fbc272"   # alex-id-ed25519-public-key
+
+# Optional BWS secret UUID for the shared k3s join token. Empty -> k3s generates one on the
+# init host and joiners read it from there.
+debian_k3s_token_bws_id: ""
+
+# Passwordless sudo for alex on these nodes (drop-in /etc/sudoers.d, visudo-validated).
+debian_k3s_passwordless_sudo: false

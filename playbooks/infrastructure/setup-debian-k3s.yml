@@ -1,0 +1,30 @@
+---
+# Baseline + k3s HA server (embedded etcd) for the GMKtec Debian 13 boxes (group debian_k3s).
+#   1. ssh keys from BWS   2. packages/sysctls   3. remove GUI + disable auto-sleep
+#   4. performance power mode   5. LVM VG on all space past the OS partitions   6. k3s server
+# CNI (Cilium), kube-vip, CoreDNS, ArgoCD are NOT here yet (need VIP / LB block decisions).
+# With flannel disabled, nodes stay NotReady until Cilium is installed - expected.
+#
+# The ONLY secret input is BWS_ACCESS_TOKEN in the environment (never on the command line):
+#   export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --limit gmktec-1
+# Add --check --diff for a dry run. Tags: ssh_keys packages headless power storage k3s
+# BWS is read on the control node only; the token is never sent to the hosts.
+#
+# First run on a fresh box: if alex's key is not installed yet, the run prompts ONCE for alex's
+# ssh password (hidden), installs the BWS key with ssh-copy-id, then carries on. The password
+# is also used as the sudo password if `sudo -n` doesn't work. Keys already installed -> no prompt.
+
+- name: Ensure ssh key access (prompts for a password only if needed)
+  ansible.builtin.import_playbook: debian-k3s-ssh-bootstrap.yml
+
+# The init host must be fully up before joiners: one host at a time, init host first.
+- name: Debian baseline + k3s server
+  hosts: debian_k3s
+  become: true
+  gather_facts: true
+  serial: 1
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # su keeps alex's PATH (no sbin)
+  roles:
+    - role: "{{ playbook_dir }}/../../roles/debian-k3s"

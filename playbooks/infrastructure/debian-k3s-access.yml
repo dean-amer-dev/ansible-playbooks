@@ -1,0 +1,24 @@
+---
+# Access only, no other changes: installs alex's ssh key (from BWS) and a visudo-validated
+# passwordless-sudo drop-in on the debian_k3s hosts. Prompts ONCE for alex's password (hidden),
+# only if a host needs it; that same password is used for sudo during this run.
+#   export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/debian-k3s-access.yml
+# Add --limit <host> to target fewer hosts. Safe to re-run.
+
+- name: Ensure ssh key access (prompts for a password only if needed)
+  ansible.builtin.import_playbook: debian-k3s-ssh-bootstrap.yml
+
+- name: Authorize key and enable passwordless sudo
+  hosts: debian_k3s
+  become: true
+  gather_facts: false
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # su keeps alex's PATH (no sbin)
+  tasks:
+    - name: Run the role's ssh_keys tasks with passwordless sudo on
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir }}/../../roles/debian-k3s"
+        tasks_from: ssh_keys
+      vars:
+        debian_k3s_passwordless_sudo: true
