@@ -1,0 +1,78 @@
+---
+# Cilium is installed once, from the init host, against its local API (kubeconfig k3s.yaml).
+- name: Cilium (init host only)
+  when: inventory_hostname == debian_k3s_init_host
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  block:
+    - name: Read installed helm version
+      ansible.builtin.command: /usr/local/bin/helm version --short
+      register: debian_k3s_helm_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install pinned helm
+      ansible.builtin.unarchive:
+        src: "https://get.helm.sh/helm-{{ debian_k3s_helm_version }}-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        extra_opts: ["--strip-components=1", "--wildcards", "*/helm"]
+        remote_src: true
+        mode: "0755"
+      when: debian_k3s_helm_version not in debian_k3s_helm_installed.stdout
+
+    - name: Read installed cilium-cli version
+      ansible.builtin.command: /usr/local/bin/cilium version --client
+      register: debian_k3s_cilium_cli_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install pinned cilium-cli
+      ansible.builtin.unarchive:
+        src: "https://github.com/cilium/cilium-cli/releases/download/{{ debian_k3s_cilium_cli_version }}/cilium-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        mode: "0755"
+      when: debian_k3s_cilium_cli_version not in debian_k3s_cilium_cli_installed.stdout
+
+    - name: Install Cilium (pinned chart)
+      kubernetes.core.helm:
+        name: cilium
+        chart_ref: cilium
+        chart_repo_url: https://helm.cilium.io
+        chart_version: "{{ debian_k3s_cilium_chart_version }}"
+        release_namespace: kube-system
+        values: "{{ debian_k3s_cilium_values }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        binary_path: /usr/local/bin/helm
+        wait: true
+        wait_timeout: 10m
+
+    - name: Wait for the CiliumLoadBalancerIPPool / L2 policy CRDs
+      ansible.builtin.command: k3s kubectl wait --for=condition=Established --timeout=120s crd/ciliumloadbalancerippools.cilium.io crd/ciliuml2announcementpolicies.cilium.io
+      changed_when: false
+
+    - name: LoadBalancer IP pool and L2 announcement policy
+      kubernetes.core.k8s:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        state: present
+        definition:
+          - apiVersion: cilium.io/v2
+            kind: CiliumLoadBalancerIPPool
+            metadata:
+              name: lan
+            spec:
+              blocks:
+                - start: "{{ debian_k3s_lb_pool_start }}"
+                  stop: "{{ debian_k3s_lb_pool_stop }}"
+          - apiVersion: cilium.io/v2alpha1
+            kind: CiliumL2AnnouncementPolicy
+            metadata:
+              name: lan
+            spec:
+              loadBalancerIPs: true
+              interfaces:
+                - "^{{ debian_k3s_lan_interface }}$"
+
+    - name: Wait for all nodes Ready
+      ansible.builtin.command: k3s kubectl wait --for=condition=Ready node --all --timeout=300s
+      changed_when: false
