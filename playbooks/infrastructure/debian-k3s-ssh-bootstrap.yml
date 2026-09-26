@@ -1,0 +1,144 @@
+---
+# Installs alex's ssh key (from BWS) on the debian_k3s hosts if it isn't there yet. Prompts ONCE
+# for alex's ssh password (hidden) only if some host needs it; otherwise silent. Also imported by
+# setup-debian-k3s.yml, so the full run is still one command. Use standalone to pre-seed keys:
+#   export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/debian-k3s-ssh-bootstrap.yml --limit gmktec-2,gmktec-3
+# Nothing is written to the hosts except authorized_keys; the password never touches disk.
+
+# Bootstrap ssh key access. Runs on the control node, once per targeted host (respects --limit).
+- name: Ensure key-based ssh works (prompt for password only if needed)
+  hosts: debian_k3s
+  connection: local
+  gather_facts: false
+  vars:
+    ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/alex_id_ed25519"
+    bws_wanted: >-
+      {{ [{'fact': 'debian_k3s_ssh_private_key', 'id': debian_k3s_bws_ssh_private_key_id},
+          {'fact': 'debian_k3s_ssh_public_key', 'id': debian_k3s_bws_ssh_public_key_id}]
+         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else []) }}
+    ssh_opts: >-
+      -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes
+      -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -i {{ ssh_key }}
+  tasks:
+    - name: Fail fast if BWS_ACCESS_TOKEN is not exported
+      ansible.builtin.fail:
+        msg: "BWS_ACCESS_TOKEN must be set in the environment"
+      when: lookup('env', 'BWS_ACCESS_TOKEN') | length == 0
+      run_once: true
+
+    - name: Fetch ssh keys (and join token, if configured) from BWS
+      ansible.builtin.command: bws secret get {{ item.id }} --output json
+      loop: "{{ bws_wanted }}"
+      loop_control:
+        label: "{{ item.fact }}"
+      register: bws_fetched
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Publish secrets as facts for every targeted host
+      ansible.builtin.set_fact:
+        "{{ item.item.fact }}": "{{ (item.stdout | from_json).value }}"
+      loop: "{{ bws_fetched.results }}"
+      loop_control:
+        label: "{{ item.item.fact }}"
+      no_log: true
+      run_once: true
+
+    - name: Probe key login
+      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} true
+      register: key_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if the host is unreachable for a reason other than auth
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}): {{ key_probe.stderr | trim }}"
+      when: key_probe.rc != 0 and 'Permission denied' not in key_probe.stderr
+
+    - name: Probe passwordless sudo (only where key login works)
+      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} sudo -n true
+      register: sudo_probe
+      changed_when: false
+      failed_when: false
+      when: key_probe.rc == 0
+
+    - name: Work out who needs the password
+      ansible.builtin.set_fact:
+        key_missing: "{{ key_probe.rc != 0 }}"
+        sudo_needs_password: "{{ key_probe.rc == 0 and sudo_probe.rc != 0 }}"
+
+    - name: Prompt for alex's ssh password (hidden; asked once for all hosts)
+      ansible.builtin.pause:
+        prompt: "alex's ssh key is not installed (or sudo needs a password) - enter alex's password"
+        echo: false
+      run_once: true
+      register: pw_prompt
+      no_log: true
+      when: ansible_play_hosts | map('extract', hostvars, 'key_missing') | select | list | length > 0
+            or ansible_play_hosts | map('extract', hostvars, 'sudo_needs_password') | select | list | length > 0
+
+    - name: Keep the password for sudo on this run only
+      ansible.builtin.set_fact:
+        ansible_become_password: "{{ pw_prompt.user_input }}"
+      no_log: true
+      when: pw_prompt.user_input is defined
+
+    - name: Refuse to continue without a password (empty input / no terminal)
+      ansible.builtin.assert:
+        that: pw_prompt.user_input | default('') | length > 0
+        fail_msg: "No password entered (run this from an interactive terminal)."
+      no_log: true
+      when: key_missing
+
+    - name: Install the key (helper + key staged in a 0700 temp dir, always removed)
+      when: key_missing
+      block:
+        - name: Stage askpass helper and public key (control node)
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: ssh-bootstrap-
+          register: boot_dir
+
+        - name: Write helper that reads the password from the environment (nothing secret on disk)
+          ansible.builtin.copy:
+            dest: "{{ boot_dir.path }}/askpass"
+            content: "#!/bin/sh\nprintf '%s\\n' \"$BOOTSTRAP_SSH_PASSWORD\"\n"
+            mode: "0700"
+
+        - name: Write public key to stage dir
+          ansible.builtin.copy:
+            dest: "{{ boot_dir.path }}/key.pub"
+            content: "{{ debian_k3s_ssh_public_key | trim }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Install key with ssh-copy-id
+          ansible.builtin.command: >-
+            ssh-copy-id -f -i {{ boot_dir.path }}/key.pub
+            -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1
+            {{ debian_k3s_user }}@{{ ansible_host }}
+          environment:
+            SSH_ASKPASS: "{{ boot_dir.path }}/askpass"
+            SSH_ASKPASS_REQUIRE: force
+            BOOTSTRAP_SSH_PASSWORD: "{{ pw_prompt.user_input }}"
+          register: copy_id
+          failed_when: false
+          no_log: true
+
+        - name: Report ssh-copy-id failure (stderr only; it never contains the password)
+          ansible.builtin.fail:
+            msg: "ssh-copy-id to {{ ansible_host }} failed: {{ copy_id.stderr | default('') | trim }}"
+          when: copy_id.rc != 0
+      always:
+        - name: Remove stage dir
+          ansible.builtin.file:
+            path: "{{ boot_dir.path }}"
+            state: absent
+          when: boot_dir.path is defined
+
+    - name: Verify key login now works
+      ansible.builtin.command: ssh {{ ssh_opts }} {{ debian_k3s_user }}@{{ ansible_host }} true
+      changed_when: false
+      when: key_missing

@@ -53,6 +53,17 @@
     - hybrid-sleep.target
     - suspend-then-hibernate.target
 
+- name: Ensure systemd drop-in directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/sleep.conf.d
+    - /etc/systemd/logind.conf.d
+
 - name: Forbid sleep in systemd-sleep config
   ansible.builtin.copy:
     dest: /etc/systemd/sleep.conf.d/10-no-sleep.conf

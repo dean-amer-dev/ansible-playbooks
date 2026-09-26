@@ -58,6 +58,14 @@
   register: debian_k3s_config
   no_log: true
 
+- name: Ensure k3s.service drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/k3s.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Give k3s top CPU weight
   ansible.builtin.copy:
     dest: /etc/systemd/system/k3s.service.d/10-cpuweight.conf

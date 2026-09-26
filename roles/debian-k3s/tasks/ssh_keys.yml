@@ -30,3 +30,15 @@
   loop_control:
     label: "{{ item.name }}"
   no_log: true
+
+# Opt-in: lets automation (and Claude, with Alex's per-run permission) run `sudo` without a
+# password. Off by default. Validated with visudo so a typo can never lock sudo out.
+- name: Passwordless sudo for alex
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-{{ debian_k3s_user }}-nopasswd
+    content: "{{ debian_k3s_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+  when: debian_k3s_passwordless_sudo | bool

@@ -11,3 +11,6 @@ debian_k3s_bws_ssh_public_key_id: "79f4be07-afcf-48e2-b802-b44000fbc272"   # ale
 # Optional BWS secret UUID for the shared k3s join token. Empty -> k3s generates one on the
 # init host and joiners read it from there.
 debian_k3s_token_bws_id: ""
+
+# Passwordless sudo for alex on these nodes (drop-in /etc/sudoers.d, visudo-validated).
+debian_k3s_passwordless_sudo: false
