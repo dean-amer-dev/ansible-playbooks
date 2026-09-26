@@ -30,6 +30,16 @@
   changed_when: false
   failed_when: false
 
+- name: Is k3s already running here? (then its own ports are expected to be in use)
+  ansible.builtin.command: systemctl is-active k3s
+  register: pf_k3s_active
+  changed_when: false
+  failed_when: false
+
+- name: Remember it for the port check below
+  ansible.builtin.set_fact:
+    debian_k3s_installed_ok: "{{ pf_k3s_active.stdout == 'active' }}"
+
 - name: Node IP is on this host
   ansible.builtin.set_fact:
     pf_ip_ok: "{{ debian_k3s_node_ip in ansible_facts.all_ipv4_addresses }}"

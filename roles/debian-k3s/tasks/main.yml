@@ -39,6 +39,10 @@
   ansible.builtin.import_tasks: storage.yml
   tags: [storage]
 
+- name: NIC rename to lan0 (effective at next boot)
+  ansible.builtin.import_tasks: network.yml
+  tags: [network]
+
 - name: Preflight - is this node ready for k3s?
   ansible.builtin.import_tasks: preflight.yml
   tags: [preflight, k3s]
