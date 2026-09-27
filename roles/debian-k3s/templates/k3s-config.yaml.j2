@@ -29,6 +29,14 @@ tls-san:
 etcd-expose-metrics: true
 etcd-snapshot-schedule-cron: "{{ debian_k3s_etcd_snapshot_schedule }}"
 etcd-snapshot-retention: {{ debian_k3s_etcd_snapshot_retention }}
+{% if debian_k3s_etcd_s3_access_key is defined %}
+etcd-s3: true
+etcd-s3-endpoint: {{ debian_k3s_etcd_s3_endpoint | regex_replace('^https?://', '') }}
+etcd-s3-bucket: {{ debian_k3s_etcd_s3_bucket }}
+etcd-s3-folder: {{ debian_k3s_etcd_s3_folder }}
+etcd-s3-access-key: "{{ debian_k3s_etcd_s3_access_key }}"
+etcd-s3-secret-key: "{{ debian_k3s_etcd_s3_secret_key }}"
+{% endif %}
 kubelet-arg:
   - kube-reserved={{ debian_k3s_kube_reserved }}
   - system-reserved={{ debian_k3s_system_reserved }}

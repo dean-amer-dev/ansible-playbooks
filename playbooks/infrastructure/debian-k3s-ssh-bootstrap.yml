@@ -16,7 +16,10 @@
     bws_wanted: >-
       {{ [{'fact': 'debian_k3s_ssh_private_key', 'id': debian_k3s_bws_ssh_private_key_id},
           {'fact': 'debian_k3s_ssh_public_key', 'id': debian_k3s_bws_ssh_public_key_id}]
-         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else []) }}
+         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_access_key', 'id': debian_k3s_bws_backup_access_key_id}] if debian_k3s_bws_backup_access_key_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_secret_key', 'id': debian_k3s_bws_backup_secret_key_id}] if debian_k3s_bws_backup_secret_key_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_endpoint', 'id': debian_k3s_bws_backup_endpoint_id}] if debian_k3s_bws_backup_endpoint_id | length > 0 else []) }}
     ssh_opts: >-
       -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes
       -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -i {{ ssh_key }}

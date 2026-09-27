@@ -8,9 +8,17 @@ debian_k3s_user: "{{ ansible_user }}"
 debian_k3s_bws_ssh_private_key_id: "fb0a8c45-a020-4c71-b92f-b44000fbac08"  # alex-id-ed25519-private-key
 debian_k3s_bws_ssh_public_key_id: "79f4be07-afcf-48e2-b802-b44000fbc272"   # alex-id-ed25519-public-key
 
-# Optional BWS secret UUID for the shared k3s join token. Empty -> k3s generates one on the
-# init host and joiners read it from there.
-debian_k3s_token_bws_id: ""
+# BWS secret UUID for the shared k3s join token (secret: debian-k3s-join-token, project: servers).
+debian_k3s_token_bws_id: "c842ea90-796b-43d1-b5bf-b4d200f0b6b5"
+
+# --- etcd snapshots to GCS, reusing the existing backup credentials (see
+# reference_backup_infra_gcs_bucket - same bucket/creds as other backup jobs, just a dedicated
+# folder prefix). BWS secret UUIDs, not secrets themselves.
+debian_k3s_bws_backup_access_key_id: "af4a292f-1f9f-45b1-9c56-b37300df69dc"   # k3s-dean-backups-access-key
+debian_k3s_bws_backup_secret_key_id: "d2d87681-b2e3-4a3e-b821-b37300df7ce5"   # k3s-dean-backups-secret-key
+debian_k3s_bws_backup_endpoint_id: "2c95ebd0-9330-455b-abbd-b37300e580b0"     # k3s-dean-backups-endpoint
+debian_k3s_etcd_s3_bucket: "amerenda-backups"
+debian_k3s_etcd_s3_folder: "k3s-dean-etcd"
 
 # Passwordless sudo for alex on these nodes (drop-in /etc/sudoers.d, visudo-validated).
 debian_k3s_passwordless_sudo: false
