@@ -54,3 +54,7 @@
 - name: Cilium CNI
   ansible.builtin.import_tasks: cilium.yml
   tags: [cilium]
+
+- name: CoreDNS cluster DNS
+  ansible.builtin.import_tasks: coredns.yml
+  tags: [coredns]

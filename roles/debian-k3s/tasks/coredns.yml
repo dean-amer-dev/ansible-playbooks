@@ -1,0 +1,18 @@
+---
+# CoreDNS is installed once, from the init host, against its local API (kubeconfig k3s.yaml).
+# Chart defaults already give the kubernetes plugin (cluster.local) and forward . /etc/resolv.conf.
+- name: CoreDNS (init host only)
+  when: inventory_hostname == debian_k3s_init_host
+  block:
+    - name: Install CoreDNS (pinned chart)
+      kubernetes.core.helm:
+        name: coredns
+        chart_ref: coredns
+        chart_repo_url: https://coredns.github.io/helm
+        chart_version: "{{ debian_k3s_coredns_chart_version }}"
+        release_namespace: kube-system
+        values: "{{ debian_k3s_coredns_values }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        binary_path: /usr/local/bin/helm
+        wait: true
+        wait_timeout: 5m

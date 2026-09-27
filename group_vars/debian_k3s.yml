@@ -55,3 +55,28 @@ debian_k3s_cilium_values:
       enabled: true
     ui:
       enabled: true
+
+# --- CoreDNS (cluster DNS; k3s's packaged coredns is disabled) ---
+debian_k3s_coredns_chart_version: "1.47.1"
+debian_k3s_coredns_values:
+  replicaCount: 3
+  k8sAppLabelOverride: kube-dns
+  service:
+    name: kube-dns
+    clusterIP: "{{ debian_k3s_cluster_dns }}"
+  priorityClassName: system-cluster-critical
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              k8s-app: kube-dns
+  podDisruptionBudget:
+    minAvailable: 2
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: CriticalAddonsOnly
+      operator: Exists
