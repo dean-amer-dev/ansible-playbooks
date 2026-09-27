@@ -8,8 +8,16 @@ debian_k3s_user: "{{ ansible_user }}"
 debian_k3s_bws_ssh_private_key_id: "fb0a8c45-a020-4c71-b92f-b44000fbac08"  # alex-id-ed25519-private-key
 debian_k3s_bws_ssh_public_key_id: "79f4be07-afcf-48e2-b802-b44000fbc272"   # alex-id-ed25519-public-key
 
-# BWS secret UUID for the shared k3s join token (secret: debian-k3s-join-token, project: servers).
-debian_k3s_token_bws_id: "c842ea90-796b-43d1-b5bf-b4d200f0b6b5"
+# Deliberately empty - see incident 2026-09-27: this cluster was already bootstrapped with k3s's
+# own auto-generated token, which also encrypts data already in etcd. Setting an explicit token
+# here retroactively broke gmktec-1 (k3s refused to start: "bootstrap data already found and
+# encrypted with different token"). A static BWS-stored token only makes sense at genuine
+# first-bootstrap time (a from-scratch cluster rebuild), never injected uniformly into an
+# already-live cluster's ongoing config. The debian-k3s-join-token BWS secret still exists for
+# that future from-scratch scenario - it must NOT be wired back in here for this running cluster.
+# Existing joiners already work fine without this: they read the real token from the init host
+# directly (k3s.yml's "Joiner without a BWS token reads the token the init host generated").
+debian_k3s_token_bws_id: ""
 
 # --- etcd snapshots to GCS, reusing the existing backup credentials (see
 # reference_backup_infra_gcs_bucket - same bucket/creds as other backup jobs, just a dedicated
