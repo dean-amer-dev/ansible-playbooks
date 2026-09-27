@@ -1,0 +1,17 @@
+---
+# kube-vip on k3s must be a DaemonSet with RBAC, not a static pod - see kube-vip.yaml.j2 for why.
+# This role briefly shipped it as a static pod; the first task below removes that file wherever it
+# landed (harmless once the DaemonSet form has never been used) before the DaemonSet is applied.
+- name: Remove the old static-pod kube-vip manifest, if present (superseded by the DaemonSet below)
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+    state: absent
+
+# Applied once, from the init host, against its local API (kubeconfig k3s.yaml) - the DaemonSet's
+# own affinity is what puts a kube-vip pod on every control-plane node.
+- name: kube-vip (init host only)
+  when: inventory_hostname == debian_k3s_init_host
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: "{{ lookup('template', 'kube-vip.yaml.j2') }}"

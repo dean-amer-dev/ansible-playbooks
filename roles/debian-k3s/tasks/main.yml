@@ -58,3 +58,7 @@
 - name: CoreDNS cluster DNS
   ansible.builtin.import_tasks: coredns.yml
   tags: [coredns]
+
+- name: kube-vip control-plane VIP
+  ansible.builtin.import_tasks: kube-vip.yml
+  tags: [kube-vip]
