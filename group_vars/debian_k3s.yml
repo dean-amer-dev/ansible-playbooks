@@ -80,3 +80,6 @@ debian_k3s_coredns_values:
       effect: NoSchedule
     - key: CriticalAddonsOnly
       operator: Exists
+
+# --- kube-vip (control-plane API VIP, ARP mode; static pod on all 3 servers) ---
+debian_k3s_kube_vip_version: "v1.2.4"
