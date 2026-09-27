@@ -54,6 +54,19 @@
         wait: true
         wait_timeout: 10m
 
+    # app-of-apps-tier shared state (starting with the bootstrap secret below) lives in its own
+    # namespace, not default - kubernetes.core.k8s has no create_namespace flag like the helm
+    # module above, so it's created explicitly.
+    - name: app-of-apps namespace
+      kubernetes.core.k8s:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: app-of-apps
+
     # The one credential nothing else in the system can supply (ESO needs this before it can
     # create anything of its own). Reused BWS secret, not a new dedicated token - see group_vars.
     - name: Bitwarden credentials Secret for ESO (created here, consumed once ESO lands via Tofu)
@@ -65,8 +78,19 @@
           kind: Secret
           metadata:
             name: bitwarden-credentials
-            namespace: default
+            namespace: app-of-apps
           type: Opaque
           stringData:
             access-token: "{{ debian_k3s_bitwarden_access_token }}"
       no_log: true
+
+    # One-time migration cleanup: PR #118 originally created this in default before the
+    # app-of-apps namespace decision. Permanent no-op once the old copy is gone.
+    - name: Remove the old bitwarden-credentials Secret from default (moved to app-of-apps above)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: bitwarden-credentials
+        namespace: default
