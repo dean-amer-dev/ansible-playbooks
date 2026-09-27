@@ -2,9 +2,9 @@
 - name: Assert target is Debian 13
   ansible.builtin.assert:
     that:
-      - ansible_distribution == 'Debian'
-      - ansible_distribution_major_version | int >= 13
-    fail_msg: "debian-k3s targets Debian 13+, got {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] | int >= 13
+    fail_msg: "debian-k3s targets Debian 13+, got {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
   tags: [always]
 
 - name: Set hostname to inventory name (k3s node name derives from it)
