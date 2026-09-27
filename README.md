@@ -1,304 +1,132 @@
 # ansible-playbooks
 
-Ansible playbooks for provisioning and managing a high-availability k3s cluster on Raspberry Pi nodes.
+Ansible playbooks for provisioning and managing:
+
+- a legacy high-availability k3s cluster on Raspberry Pi nodes (`[k3s]` inventory group),
+- the Infrastructure 2.0 k3s cluster on GMKtec Debian 13 boxes (`[debian_k3s]` group — see
+  [`docs/debian-k3s/`](docs/debian-k3s/running.md)),
+- the `archlinux`/CachyOS gaming workstation (`[cachyos_workstations]` group — see
+  [`docs/README.md`](docs/README.md) for its 17 roles),
+- and Komodo Periphery / Docker hosts (Mac Mini, murderbot, archlinux).
+
+**Role-by-role how-to-run and how-to-recover docs live in [`docs/`](docs/README.md).** This file
+covers only what's shared across the whole repo: inventory, secrets, and control-machine setup.
 
 ## Cluster Inventory
 
 | Host | Role | IP | Notes |
 |------|------|----|-------|
-| rpi5-0 | Controller (cluster-init) | 10.100.20.10 | |
-| rpi5-1 | Controller | 10.100.20.11 | Preferred restore leader |
-| rpi4-0 | Controller | 10.100.20.12 | 4GB RAM, tight memory |
+| rpi5-0 / rpi5-1 / rpi4-0 | Legacy k3s controllers | 10.100.20.10 / .11 / .12 | rpi5-1 is preferred restore leader; rpi4-0 has 4GB RAM, tight memory |
+| gmktec-1 / gmktec-2 / gmktec-3 | Infrastructure 2.0 k3s servers | 10.100.20.20 / .21 / .22 | Debian 13, embedded etcd — see `docs/debian-k3s/` |
 | murderbot | GPU host (bare metal Docker) | 10.100.20.19 | Not part of k3s |
-| archlinux | CachyOS workstation + k3s agent + GPU / Docker host | 10.100.20.25 | Joins cluster as agent; Longhorn scheduling configurable |
-| lemurpro | Workstation (Komodo); not a k3s node | 10.100.20.26 | Set `ansible_host` / `archlinux_ip` in `inventory.ini` to the laptop LAN IP |
+| archlinux | CachyOS workstation + k3s agent + GPU/Docker host | 10.100.20.25 | Joins the legacy k3s cluster as agent |
+| lemurpro | Workstation (Komodo); not a k3s node | — (Tailscale) | `ansible_host` is a Tailscale IP; ufw denies inbound on LAN |
 | mac-mini-m4 | Docker host (OrbStack) | 10.100.20.18 | Not part of k3s |
 
-### Inventory groups (reduced sprawl)
-
-| Group | Purpose |
-|-------|---------|
-| `k3s` | All k3s members → `group_vars/k3s.yml` (cluster BWS UUIDs, CIDRs, Longhorn defaults). |
-| `pis` | Raspberry Pi k3s nodes (controllers today) → `group_vars/pis.yml`. `setup-rpi.yml` targets this group. |
-| `servers` | Mac Mini + murderbot → `group_vars/servers.yml` (shared timezone, BWS helper version, Komodo Core URL/UUIDs). |
-| `computers` | Workstations (`archlinux`, `lemurpro`) → `group_vars/computers.yml` (Komodo Periphery + workstation packages). |
-| `archlinux_k3s` | Arch k3s agent only → `group_vars/archlinux_k3s.yml` (Longhorn disk path). |
-
-All nodes are accessed as user `alex` with SSH key `~/.ssh/alex_id_ed25519`.
+All nodes are accessed as user `alex` with SSH key `~/.ssh/alex_id_ed25519` (`inventory/inventory.ini`
+`[all:vars]`). Inventory groups are documented inline in `inventory/inventory.ini`.
 
 ## Secrets Policy
 
-**All secrets MUST live in Bitwarden Secrets Manager (BWS). No exceptions.**
-
-- BWS is the single source of truth for every secret used by this repo (k3s join token, GitHub PATs, registry tokens, etc.).
-- Playbooks load those values at runtime with the `bws` CLI using **one** extra variable: `bws_access_token` (a BWS [machine-account access token](https://bitwarden.com/help/machine-accounts/) for the CLI — not a second copy of each secret).
-- Secret UUIDs are defined in `group_vars/k3s.yml` (`bws_secrets` dict). Non-secret identifiers (`bws_org_id`, `bws_project_id`) stay in git.
-- The `bws` CLI auto-installs on the control machine on first run if not present.
-- Do **not** pass cluster tokens, passwords, or PATs via `-e` or inventory; if something is secret, it belongs in BWS.
-
-The only credential you pass Ansible is the BWS access token:
-
-```bash
-ansible-playbook -i inventory/inventory.ini all.yml -e bws_access_token=<BWS_ACCESS_TOKEN>
-```
-
-## Control machine: Arch Linux (`localhost`)
-
-These playbooks are written assuming you run **`ansible-playbook` on your Arch box** (your normal user session). The **first play is always `localhost`**: it runs `bws` *here*, pulls secrets into Ansible facts, and never sends your BWS token over SSH to the cluster nodes.
-
-On the Arch control host, install tooling once:
-
-```bash
-sudo pacman -S ansible python openssh unzip curl
-cd /path/to/ansible-playbooks
-ansible-galaxy collection install -r requirements.yml
-```
-
-- **`unzip`** and **`curl`** are required if `bws` is not already on `PATH` (the play downloads the official `bws` zip from GitHub into `/usr/local/bin/bws`).
-- **`openssh`** is for reaching Pis and other remotes with the key in `inventory.ini` (`~/.ssh/alex_id_ed25519`).
-
-**k3s agent on the same machine:** Keep the real LAN `ansible_host` for `archlinux` (for example `10.100.20.25`) so k3s `node-ip` stays correct. Set **`ansible_connection=local`** and **`archlinux_ip`** on the host line in `inventory/inventory.ini`. Optional per-host overrides can also live in `inventory/host_vars/<hostname>.yml` next to the inventory.
-
-Do **not** set `ansible_host` to `127.0.0.1` unless you intend the node to advertise loopback to the cluster.
-
-**Driving `archlinux` from another PC over SSH:** remove `ansible_connection=local` from `inventory.ini` for that host (or override in `inventory/host_vars`).
-
-### Arch / CachyOS laptop (playbook runs locally)
-
-Use this when you run `ansible-playbook` **on the laptop itself** (same pattern as homelab `archlinux` with `ansible_connection=local`):
-
-1. Add the laptop to `[computers]`, `[archlinux_komodo_hosts]`, and `[cachyos_workstations]`. **Do not** add it to `[k3s]` / `[agents]` if it should not join the cluster (see `lemurpro` in `inventory.ini`).
-2. On the host line in `inventory.ini`, set `ansible_host=<LAN IP>`, `ansible_connection=local`, and `archlinux_ip=<same LAN IP>` (used in `setup-archlinux-komodo` summary / Komodo URL hints).
-3. Run `setup-archlinux-komodo.yml` with `--limit <hostname>` (and `bws_access_token` on first bootstrap).
-
-**Bitwarden on workstation hosts:** the play installs **Bitwarden Password Manager** (`bitwarden`), the **vault CLI** (`bitwarden-cli`, command `bw`), and **Bitwarden Secrets Manager CLI** (`bws` to `/usr/local/bin/bws`) for automation and Komodo compose rendering.
-
-## Debian k3s nodes (Infrastructure 2.0: `debian_k3s` group)
-
-Three identical GMKtec boxes (Debian 13, Ryzen 7 7730U, 28 GiB RAM, 477 GB NVMe) that become the new HA k3s
-cluster. Role `roles/debian-k3s`, playbooks under `playbooks/infrastructure/`. Only secret input is
-`BWS_ACCESS_TOKEN` in the environment.
-
-| Playbook | What it does |
-|----------|--------------|
-| `debian-k3s-access.yml` | ssh key (from BWS) + passwordless sudo. Prompts (hidden) only if needed: alex's password, or **root's** if `sudo` isn't installed (then `su` is used). |
-| `debian-k3s-ssh-bootstrap.yml` | The key/sudo probing part only (imported by the others). |
-| `setup-debian-k3s.yml` | Everything: keys, packages/sysctls/modules, swap off, GUI removal, sleep disabled, performance power mode, storage layout, preflight, k3s server. |
+**All secrets MUST live in Bitwarden Secrets Manager (BWS). No exceptions.** The only credential
+you ever pass to Ansible is a BWS machine-account access token:
 
 ```bash
 export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/debian-k3s-access.yml            # first contact
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --skip-tags k3s   # baseline only
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --tags preflight  # read-only readiness check
+# or, where a playbook takes it as an extra-var instead of an env var:
+ansible-playbook -i inventory/inventory.ini all.yml -e bws_access_token=<TOKEN>
 ```
 
-Tags: `ssh_keys packages headless power storage preflight k3s`. The k3s step is written but has not been run yet.
+Secret UUIDs live in `group_vars/*.yml` (`bws_secrets` dicts, or per-role `*_bws_*_id` vars) — they
+are identifiers, not secrets, safe to commit. Never pass a cluster token, password, or PAT via
+`-e` or inventory directly.
 
-**Storage:** the OS gets exactly 128G (`/` 20G, `/var` 40G, `/tmp` 4G, `/home` 64G); the rest of the VG (~347 GiB)
-is the pool for OpenEBS Local PV LVM. `/home` cannot shrink while mounted, so it is migrated to a new LV; the
-**first run ends with "REBOOT needed"** and the **next run after the reboot** removes the old LV. Reboot nodes one
-at a time. Existing VG contents are never wiped or shrunk.
+## Prerequisites
 
-**Not included yet:** static IP / `lan0` rename, Cilium, kube-vip, CoreDNS, ArgoCD (nodes stay `NotReady` until Cilium).
+- Ansible on the control machine (Arch: `sudo pacman -S ansible python openssh unzip curl`;
+  elsewhere: your distro's `ansible`/`ansible-core`).
+- SSH access to remote nodes (key-based, `~/.ssh/alex_id_ed25519`).
+- A BWS machine-account access token.
+- Collections: `ansible-galaxy collection install -r requirements.yml`.
+- **`unzip`/`curl`** are needed only if the `bws` CLI isn't already on `PATH` — `fetch-secrets.yml`
+  downloads and installs it automatically otherwise.
 
-## Prerequisites (any control OS)
+### Control machine: Arch Linux (`localhost`)
 
-- Ansible on the control machine (above: Arch packages; elsewhere: your distro’s `ansible` / `ansible-core`)
-- SSH access to remote nodes (key-based, `~/.ssh/alex_id_ed25519` per `inventory.ini`)
-- BWS machine-account access token
-- Collections: `ansible-galaxy collection install -r requirements.yml`
+Most playbooks are written assuming `ansible-playbook` runs **on the Arch control box** — the
+first play is almost always `localhost` (fetches BWS secrets there, never sends the token over
+SSH). For `archlinux` itself as a managed host: keep its real LAN `ansible_host` (not `127.0.0.1`),
+set `ansible_connection=local` and `archlinux_ip` on its inventory line so k3s `node-ip` stays
+correct. To drive `archlinux` from a *different* control machine over SSH instead, remove
+`ansible_connection=local` from its inventory line.
 
 ## Directory Structure
 
 ```
 ansible-playbooks/
-├── all.yml                          Master playbook (full cluster setup)
-├── requirements.yml                 Ansible collection dependencies
-├── inventory/
-│   └── inventory.ini                Node inventory with groups and host vars
-├── group_vars/
-│   ├── k3s.yml                      k3s cluster vars, BWS secret UUIDs, Longhorn defaults
-│   ├── pis.yml                      Raspberry Pi k3s nodes (merged old rpi + rpi5 NVMe)
-│   ├── archlinux_k3s.yml            Arch k3s agent Longhorn disk path
-│   ├── computers.yml                Workstations: Komodo Periphery + workstation packages
-│   ├── servers.yml                  Mac Mini + murderbot shared Komodo/BWS metadata
-│   ├── macmini_hosts.yml            Mac Mini–specific vars
-│   └── murderbot_komodo_hosts.yml   Murderbot host-specific (IP, media paths)
-├── inventory/host_vars/             (optional per-host overrides next to inventory.ini)
-├── tasks/
-│   ├── check-cluster-health.yml     Health gate — aborts if any node is NotReady
-│   ├── wait-for-node-ready.yml      Poll until a node rejoins the cluster
-│   ├── confirm-destructive.yml      Human confirmation prompt for dangerous ops
-│   └── archlinux-komodo-render-compose-env.yml  BWS → archlinux/komodo/compose.env (shared)
-└── playbooks/
-    ├── infrastructure/
-    │   ├── setup-rpi.yml            Raspberry Pi OS prep (hosts: `pis`)
-    │   ├── k3s-controller.yml       Install k3s server on controller nodes
-    │   ├── k3s-agent.yml            Install k3s agent on worker nodes
-    │   ├── longhorn-storage.yml     iSCSI/NFS prerequisites + Longhorn scheduling
-    │   ├── post-k3s.yml             Node labels and taints
-    │   ├── etcd-tmpfs.yml           Migrate etcd to tmpfs (RAM disk)
-    │   ├── nvme-setup.yml           RPi 5 NVMe HAT+ configuration
-    │   ├── k3s-recover.yml          Smart recovery (token rotation, snapshot restore)
-    │   ├── k3s-full-recovery.yml    Break-glass: full cluster restore from snapshot
-    │   ├── enable-etcd-metrics.yml  Expose etcd metrics for Prometheus
-    │   ├── fetch-secrets.yml        Fetch all secrets from BWS (runs on localhost)
-    │   ├── setup-archlinux-k3s.yml  Pacman deps before k3s on Arch agents
-    │   ├── archlinux-k3s-agent.yml  Fetch BWS → Arch prereqs → k3s agent (scoped host)
-    │   ├── docker-storage.yml       Move Docker data root to /mnt/storage (GPU hosts)
-    │   ├── setup-macmini.yml        Mac Mini M4 Docker host setup
-│   ├── setup-archlinux-komodo.yml  Docker + Periphery + media dirs (Komodo on archlinux)
-│   ├── setup-debian-komodo.yml     Debian GPU host (murderbot): Docker + Periphery + BWS patterns
-│   ├── sysctl-tuning.yml           Sysctl/network tuning (when used)
-│   └── smoke-test.yml           End-to-end cluster health validation
-    └── applications/
-        └── post-k3s-setup.yml       ArgoCD bootstrap and GitOps setup
+├── all.yml                 Master playbook (full legacy-cluster setup)
+├── requirements.yml        Ansible collection dependencies
+├── inventory/inventory.ini Node inventory (groups + host vars)
+├── group_vars/              Group-level variables (no secrets — BWS UUIDs only)
+├── tasks/                   Shared cross-role tasks (health gates, confirmation prompts, etc.)
+├── roles/                   One role per concern — see docs/README.md for all 18
+├── playbooks/
+│   ├── infrastructure/      Host/cluster provisioning and recovery — see below
+│   └── applications/        ArgoCD bootstrap, Z2M backup/restore
+└── docs/                     Per-role running/recovery docs — see docs/README.md
 ```
 
-## Usage
+## Playbook quick reference
 
-### Full cluster setup (from scratch)
+Role-driven playbooks (`setup-cachyos.yml`, `setup-debian-k3s.yml`, `*-k3s-agent.yml`,
+`debian-k3s-access.yml`) are documented in their role's `docs/<role>/running.md`. The rest:
 
-```bash
-ansible-playbook -i inventory/inventory.ini all.yml -e bws_access_token=<TOKEN>
-```
+| Playbook | What it does |
+|----------|---------------|
+| `fetch-secrets.yml` | Fetches BWS secrets on localhost; imported by most other playbooks. |
+| `setup-rpi.yml` | Raspberry Pi OS prep for the legacy k3s controllers. |
+| `k3s-controller.yml` / `k3s-agent.yml` | Install k3s server/agent on the legacy Pi cluster. |
+| `longhorn-storage.yml` | iSCSI/NFS/kernel-module prereqs + Longhorn scheduling config. |
+| `post-k3s.yml` | Node labels and taints (legacy cluster). |
+| `etcd-tmpfs.yml` | Migrates legacy-cluster etcd to a tmpfs RAM disk. |
+| `nvme-setup.yml` | RPi 5 NVMe HAT+ configuration. |
+| `k3s-recover.yml` / `k3s-full-recovery.yml` | Legacy-cluster smart recovery / break-glass full restore — see [Cluster Recovery](#cluster-recovery). |
+| `enable-etcd-metrics.yml` | Exposes legacy-cluster etcd metrics for Prometheus. |
+| `k3s-image-gc.yml` | Fleet-wide daily k3s/containerd image GC (all k3s nodes + murderbot). |
+| `smoke-test.yml` | Read-only end-to-end legacy-cluster health validation. |
+| `docker-storage.yml` | Moves Docker's data root to `/mnt/storage` on GPU hosts. |
+| `setup-macmini.yml` | OrbStack, Komodo, Tailscale, BlueBubbles on Mac Mini; `--tags mini-dns` refreshes the DNS proxy LaunchDaemons only. |
+| `setup-archlinux-komodo.yml` / `setup-debian-komodo.yml` | Docker + Komodo Periphery + `compose.env` from BWS, on archlinux / murderbot respectively. |
+| `setup-archlinux-arc-docker.yml` | Docker group GID alignment for ARC k3s runners (also run from `docker` role — see `docs/docker/`). |
+| `sysctl-tuning.yml` | Raises inotify limits on k3s + GPU agent hosts. |
+| `set-static-ip.yml` | Pins a host's current DHCP address as static (defaults to `laptop`). |
+| `post-k3s-setup.yml` (applications) | ArgoCD bootstrap + GitOps root-app. |
+| `z2m-backup.yml` / `z2m-restore.yml` (applications) | Zigbee2MQTT config backup/restore. |
 
-`all.yml` runs in order: secrets → RPi setup → k3s controllers → agents → Longhorn → labels/taints → etcd tmpfs → auto-recovery service → ArgoCD bootstrap → smoke test.
+## Cluster Safety (legacy Pi k3s cluster)
 
-### Individual playbooks
+Playbooks that restart k3s or take legacy-cluster nodes offline enforce: `serial: 1` (one node at
+a time), a pre-flight health gate (abort if any node is already `NotReady`), a post-flight health
+gate (wait for rejoin + verify health before moving to the next node), and human confirmation for
+destructive operations (force restore, token rotation, full recovery). The 3-controller etcd
+cluster tolerates 1 node down — the health gate prevents touching a second node while the first is
+still recovering.
 
-```bash
-# Prepare RPi nodes (networking, packages, cgroups)
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-rpi.yml
+## High Availability (legacy Pi k3s cluster)
 
-# Install k3s on controllers (HA with etcd)
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-controller.yml \
-  -e bws_access_token=<TOKEN>
+- **etcd on tmpfs**: a 1G RAM disk (SD card I/O is too slow); wiped on every reboot, recovery
+  depends on snapshots.
+- **Snapshots**: every 5 minutes to SD card, 12 retained, each controller offset by its inventory
+  index so a snapshot exists somewhere roughly every 100 seconds.
+- **Auto-recovery service**: `k3s-etcd-recovery.service`, runs before k3s on every boot — rejoins
+  from peers on a single-node reboot, or leader-elects + restores from snapshot on full power loss.
+- **Restore priority**: rpi5-1 → rpi5-0 → rpi4-0.
 
-# Join worker nodes
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-agent.yml \
-  -e bws_access_token=<TOKEN>
+## Cluster Recovery (legacy Pi k3s cluster)
 
-# Configure Longhorn storage prerequisites
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/longhorn-storage.yml
-
-# Apply node labels and taints
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/post-k3s.yml
-
-# Migrate etcd to RAM disk
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/etcd-tmpfs.yml \
-  -e bws_access_token=<TOKEN>
-
-# Setup RPi 5 NVMe HAT+
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/nvme-setup.yml \
-  --limit rpi5-0
-
-# Bootstrap ArgoCD and GitOps
-ansible-playbook -i inventory/inventory.ini playbooks/applications/post-k3s-setup.yml \
-  -e bws_access_token=<TOKEN>
-
-# Validate cluster health (read-only, safe anytime)
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/smoke-test.yml
-
-# Setup Mac Mini Docker host
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-macmini.yml \
-  -e bws_access_token=<TOKEN>
-
-# Mac Mini — DNS proxy + pf redirect only (Technitium path via dns-udp-proxy.py).
-# Fetches origin, checks out main, fast-forwards to origin/main. Tracked edits only under
-# `macmini_gitops_allowlisted_dirty_paths` (e.g. inject-secrets compose files) are stashed around the pull; anything else dirty fails.
-# Copies LaunchDaemons from that checkout and restarts services. No Bitwarden token required:
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-macmini.yml \
-  --limit mac-mini-m4 --tags mini-dns
-
-# Komodo Periphery on murderbot (Debian) — same BWS / passkey patterns as archlinux
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-komodo.yml \
-  --extra-vars "bws_access_token=<TOKEN>"
-
-# Inotify sysctl tuning for k3s + GPU agent nodes
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/sysctl-tuning.yml
-
-# Pin a host's current DHCP-leased IP as static (dhcpcd/netplan/NetworkManager
-# auto-detected). Targets the `laptop` host by default (10.100.20.132).
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/set-static-ip.yml
-
-# Komodo Periphery on archlinux (Docker, BWS, compose.env, force-recreate Periphery, media dirs)
-# First run: pass token. Re-runs: omit token if /etc/komodo/.bws-secret already exists.
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-archlinux-komodo.yml \
-  --extra-vars "bws_access_token=<TOKEN>"
-
-# CachyOS workstation bootstrap on archlinux:
-# Installs requested desktop apps + dotfiles core/devops toolchain using
-# official repos and AUR (yay), then prints command/service verification.
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-archlinux-komodo.yml \
-  --limit cachyos_workstations \
-  --extra-vars "bws_access_token=<TOKEN>"
-
-The archlinux BWS machine account (written to `/etc/komodo/.bws-secret`) must **read** both `komodo-dean-passkey` and **`komodo-dean-admin-password`**: the playbook can log into Komodo Core and set Variable `KOMODO_PERIPHERY_PASSKEY` (optional belt-and-suspenders). The usual **Invalid passkey** fix is **`passkey = ""`** on the `archlinux` `[[server]]` in `resource-sync/stacks.toml` so Core uses its global `komodo-dean-passkey` (see Komodo section below).
-
-For policy alignment, avoid manual package/install commands on the workstation.
-If you discover a missing dependency during operations, add it to Ansible vars
-for `computers` / workstation lists in `group_vars/computers.yml` and re-run the playbook.
-
-## Playbook Descriptions
-
-### Infrastructure
-
-| Playbook | Description | Safety |
-|----------|-------------|--------|
-| `setup-rpi.yml` | Raspberry Pi prep for k3s (`pis`: controllers + future Pi workers) | Non-disruptive |
-| `k3s-controller.yml` | Installs k3s server with etcd HA, pulls kubeconfig | `serial: [1, n-1]` + health gate |
-| `k3s-agent.yml` | Installs k3s agent and joins workers | `serial: 1` + health gate |
-| `longhorn-storage.yml` | iSCSI, NFS, kernel modules; Longhorn scheduling config | Non-disruptive |
-| `post-k3s.yml` | Node labels (`longhorn-storage`, `rpi5-host`) and taints | Non-disruptive |
-| `etcd-tmpfs.yml` | Migrates etcd to tmpfs (1G RAM disk) with snapshot pre-backup | `serial: 1` + health gate + confirmation |
-| `nvme-setup.yml` | Enables PCIe Gen 2, formats + mounts NVMe for Longhorn | RPi 5 only; requires reboot |
-| `k3s-recover.yml` | Smart recovery: fixes config, tmpfs, token; deploys auto-recovery service | `serial: 1`; destructive ops need confirmation |
-| `k3s-full-recovery.yml` | Break-glass: restores all controllers from snapshot when cluster is fully down | Confirmation required; see [Cluster Recovery](#cluster-recovery) |
-| `enable-etcd-metrics.yml` | Adds `--etcd-expose-metrics=true` to k3s config | `serial: 1` + health gate |
-| `fetch-secrets.yml` | Fetches secrets from BWS and sets facts for subsequent plays | Non-disruptive |
-| `docker-storage.yml` | Moves Docker data root to `/mnt/storage` on GPU hosts | GPU hosts only |
-| `setup-macmini.yml` | OrbStack, Komodo, Tailscale, BlueBubbles on Mac Mini; installs passwordless `sudo /bin/launchctl kickstart … inject-secrets` so `sync-stacks.sh` can re-run secrets after host `git pull`; **`--tags mini-dns`** refreshes pf + `dns-udp-proxy` LaunchDaemons from the Mini’s `komodo-dean-gitops` clone | Mac Mini only |
-| `setup-archlinux-komodo.yml` | Docker, `bws`, Periphery on `:8120`; `compose.env` from BWS (trimmed passkey); **`docker compose ... --force-recreate`** each run; media dirs | `archlinux_komodo_hosts` (+ `group_vars/computers.yml`); first run needs `-e bws_access_token`, later re-runs optional if `/etc/komodo/.bws-secret` exists |
-| `setup-debian-komodo.yml` | Murderbot (Debian): Docker + Periphery + `compose.env` from BWS; force-recreates Periphery on re-run (same passkey hygiene as Arch) | Group `murderbot_komodo_hosts`; token like `setup-archlinux-komodo` |
-| `sysctl-tuning.yml` | Raises inotify limits on `k3s` + `gpu_k3s` hosts for many pods/watchers | Non-disruptive; see playbook for `--limit` |
-| `set-static-ip.yml` | Pins a host's current DHCP address as static; auto-detects dhcpcd/netplan/NetworkManager, uses the real active connection profile (not a guessed name) | Targets `laptop` by default; brief reconnect blip when the NetworkManager profile comes back up |
-| `smoke-test.yml` | Validates nodes, etcd, tmpfs, snapshots, Longhorn, ArgoCD | Read-only, safe anytime |
-
-### Applications
-
-| Playbook | Description |
-|----------|-------------|
-| `post-k3s-setup.yml` | Installs ArgoCD via Helm, creates repo + BWS secrets, applies root-app |
-
-## Cluster Safety
-
-Playbooks that restart k3s or take nodes offline enforce these invariants:
-
-- **`serial: 1`** — one node at a time, never parallel
-- **Pre-flight health gate** — if any node is NotReady, the playbook aborts before touching anything
-- **Post-flight health gate** — waits for the node to rejoin and verifies cluster health before moving on
-- **Human confirmation** — destructive operations (force restore, token rotation, full recovery) require typing `yes`
-
-The 3-controller etcd cluster tolerates 1 node down. The health gate prevents touching a second node while the first is still recovering, avoiding quorum loss.
-
-## High Availability
-
-- **etcd on tmpfs**: etcd data runs on a 1G RAM disk for performance (SD card I/O is too slow). Data is wiped on every reboot — recovery depends on snapshots.
-- **Snapshots**: Taken every 5 minutes to SD card (`/var/lib/rancher/k3s/server/db/snapshots/`), 12 retained. Each controller offsets by its inventory index (`:00`, `:01`, `:02`), so a snapshot exists somewhere in the cluster roughly every 100 seconds.
-- **Auto-recovery service**: `k3s-etcd-recovery.service` runs before k3s on every boot. Handles both single-node reboots (rejoin from peers) and full power loss (leader election + snapshot restore). Deployed by `k3s-recover.yml`.
-- **Restore priority**: rpi5-1 → rpi5-0 → rpi4-0 (by inventory index, weighted by snapshot freshness).
-
-## Cluster Recovery
-
-### Automatic (first — wait ~15 minutes)
-
-`k3s-etcd-recovery.service` runs on boot and handles recovery without intervention:
-
-- **Single node reboot**: detects peers are up, wipes local etcd, rejoins cluster. No data loss.
-- **Full power loss**: waits up to 3 minutes for any peer, then the node with the freshest snapshot restores it and becomes leader. Others rejoin once the API is up. Data loss window: up to 5 minutes.
-
-Check whether it worked:
+**Automatic first (wait ~15 min)** — `k3s-etcd-recovery.service` handles both a single-node reboot
+(rejoin from peers, no data loss) and full power loss (leader election + snapshot restore, up to
+5 min data-loss window) with no intervention. Check:
 
 ```bash
 ssh alex@10.100.20.10
@@ -307,168 +135,64 @@ sudo systemctl is-active k3s
 curl -k https://localhost:6443/healthz
 ```
 
-### Ansible — smart recovery (partial failures, config issues)
-
-Use `k3s-recover.yml` when auto-recovery ran but left the cluster in a bad state, or for targeted fixes:
+**`k3s-recover.yml`** (partial failures / config issues):
 
 ```bash
-# Fix config/tmpfs issues and deploy auto-recovery service
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml \
-  -e bws_access_token=<TOKEN>
-
-# Force restore from snapshot on a single node
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml \
-  -e bws_access_token=<TOKEN> -e force_restore=true --limit rpi5-1
-
-# Rotate the k3s cluster token across all nodes
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml \
-  -e bws_access_token=<TOKEN> -e rotate_token=true
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml -e bws_access_token=<TOKEN>
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml -e bws_access_token=<TOKEN> -e force_restore=true --limit rpi5-1
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-recover.yml -e bws_access_token=<TOKEN> -e rotate_token=true
 ```
 
-### Ansible — full cluster restore (all controllers down, auto-recovery failed)
-
-`k3s-full-recovery.yml` is the break-glass playbook. It finds the most recent snapshot across all controllers, restores the leader, then rejoins the others.
+**`k3s-full-recovery.yml`** (break-glass, all controllers down): finds the most recent snapshot
+across all controllers, restores the leader, rejoins the others.
 
 ```bash
-# Dry run first
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-full-recovery.yml \
-  -e bws_access_token=<TOKEN> --check
-
-# Actual recovery
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-full-recovery.yml \
-  -e bws_access_token=<TOKEN>
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-full-recovery.yml -e bws_access_token=<TOKEN> --check   # dry run
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/k3s-full-recovery.yml -e bws_access_token=<TOKEN>
 ```
 
-What it does:
-1. Pre-flight: validates SSH access, finds snapshots, checks etcdctl
-2. Elects restore leader (node with freshest snapshot)
-3. Stops k3s on all controllers
-4. Restores leader from snapshot (`--server ""` overrides the config's `server:` value so `--cluster-reset` works correctly)
-5. Copies restored etcd data to tmpfs, starts leader
-6. Cleans etcd on followers, starts them — they rejoin the leader
-7. Waits for all nodes Ready, validates etcd health
+**Verify after recovery**: `ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/smoke-test.yml`, or
+`kubectl get nodes`, `kubectl get --raw /healthz/etcd`, `kubectl get applications -A`,
+`kubectl get volumes -A -n longhorn-system`.
 
-### Verify after recovery
+## archlinux node taint (legacy cluster, infra-only by default)
 
-```bash
-ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/smoke-test.yml
-```
+`post-k3s.yml` labels `archlinux=true` and taints the `archlinux_k3s` host with
+`archlinux=true:NoSchedule`, so ordinary workloads stay off it by default. Flannel already
+tolerates all `NoSchedule` taints; MetalLB and Longhorn need the matching toleration in GitOps
+(`k3s-dean-gitops` `infra/metallb/values.yaml` and `infra/longhorn/values.yaml`). To run a
+workload only on `archlinux`, add both a `nodeSelector: {archlinux: "true"}` and the matching
+`archlinux:NoSchedule` toleration.
 
-Or manually:
+## Komodo on archlinux (Periphery): "Invalid passkey" / login failure
 
-```bash
-kubectl get nodes
-kubectl get --raw /healthz/etcd
-kubectl get applications -A          # ArgoCD auto-syncs within 3-5 min
-kubectl get volumes -A -n longhorn-system
-```
+Komodo Core (mac-mini-m4) opens a TLS connection to Periphery on the Arch box
+(`https://10.100.20.25:8120`). The Core "server" resource passkey must match
+`PERIPHERY_PASSKEYS` in `~/komodo-dean-gitops/archlinux/komodo/compose.env` on Arch — both come
+from the same Bitwarden secret `komodo-dean-passkey`.
 
-## Arch Linux k3s agent
+**What the error means**: "Failed to receive Login Success message" / "Invalid passkey" is almost
+always a **string mismatch** (wrong secret, stale file, invisible whitespace), not TLS or
+firewall. **Gotcha**: `passkey = "[[SOME_VARIABLE]]"` on a `[[server]]` in
+`resource-sync/stacks.toml` can get stored in Core **literally** (including the brackets) — prefer
+`passkey = ""` so Core uses its global passkey instead.
 
-`archlinux` is in `agents` and joins the existing HA cluster (first controller URL is taken from inventory). From your **Arch control machine** (`localhost` runs `fetch-secrets` first):
+**Checklist**: (1) `resource-sync/stacks.toml` → `passkey = ""` for the archlinux server, re-sync
+after changing. (2) Arch `compose.env` → if `PERIPHERY_PASSKEYS` is still
+`ANSIBLE_WILL_REPLACE_THIS`, re-run `setup-archlinux-komodo.yml`. (3) If `komodo-dean-passkey` was
+rotated in Bitwarden, re-inject mac-mini secrets, re-run `setup-archlinux-komodo.yml`, restart
+Komodo Core on the Mini if still stale.
 
-```bash
-cd /path/to/ansible-playbooks
-ansible-playbook -i inventory/inventory.ini \
-  playbooks/infrastructure/archlinux-k3s-agent.yml \
-  -e bws_access_token=<BWS_ACCESS_TOKEN> \
-  -e k3s_agent_hosts=archlinux_k3s
-```
-
-`k3s_agent_hosts` must be a host or group pattern so only this machine is targeted (otherwise `k3s-agent.yml` would run on every agent). The inventory defines `archlinux_k3s` as a single-host group for convenience; `archlinux` (the hostname) also works.
-
-Longhorn node packages use `pacman` on Arch (`nfs-utils`, `open-iscsi`, etc.); see `longhorn-storage.yml`.
-
-### archlinux node taint (infra-only by default)
-
-`post-k3s.yml` labels **`archlinux=true`** and taints the **`archlinux_k3s`** host with **`archlinux=true:NoSchedule`**. Only pods that **tolerate** that taint can schedule there, so ordinary application workloads stay off this box.
-
-- **Flannel** (`kube-flannel-ds`) already tolerates all `NoSchedule` taints (`operator: Exists`).
-- **MetalLB** and **Longhorn** need the matching toleration in GitOps — see `k3s-dean-gitops` `infra/metallb/values.yaml` and `infra/longhorn/values.yaml` (sync ArgoCD **before** or right after applying the taint so those pods do not sit Pending).
-
-To run a workload **only** on `archlinux`, add both:
-
-```yaml
-nodeSelector:
-  archlinux: "true"
-tolerations:
-  - key: archlinux
-    operator: Equal
-    value: "true"
-    effect: NoSchedule
-```
-
-## Komodo on archlinux (Periphery): “Invalid passkey” / login failure
-
-Komodo **Core** (mac-mini-m4) opens a TLS connection to **Periphery** on the
-Arch box (`https://10.100.20.25:8120` by default). The Core “server” resource
-passkey must match **`PERIPHERY_PASSKEYS`** in
-`~/komodo-dean-gitops/archlinux/komodo/compose.env` on Arch — both come from
-the same Bitwarden secret **`komodo-dean-passkey`** (UUID in
-`group_vars/computers.yml` as `komodo_periphery_passkey_bws_uuid`).
-
-### What the error means
-
-Symptoms include **“Failed to receive Login Success message”** and
-**“Invalid passkey”** in Core–Periphery traces. That is almost always a **string
-mismatch** (wrong secret, stale file, or invisible whitespace), not TLS or
-firewall.
-
-**GitOps gotcha:** in `resource-sync/stacks.toml`, **`passkey = "[[SOME_VARIABLE]]"`**
-on a `[[server]]` can be stored in Core **literally** (including the brackets),
-so Core sends that text instead of the secret — Periphery then rejects it even
-when the Variable and both Periphery envs match BWS. Prefer **`passkey = ""`**
-for the archlinux server so Core uses its **global** passkey (`KOMODO_PASSKEY_FILE`
-→ `komodo-dean-passkey` on the Mini), same as `PERIPHERY_PASSKEYS` on Arch.
-
-### Checklist (in order)
-
-1. **`resource-sync/stacks.toml`** — For `[[server]]` `archlinux`, use
-   **`passkey = ""`** (inherit Core global) unless you truly need a per-server
-   override. Re-sync after changing TOML.
-2. **Arch `compose.env`** — If `PERIPHERY_PASSKEYS` is still
-   `ANSIBLE_WILL_REPLACE_THIS`, the render step never succeeded; re-run
-   `setup-archlinux-komodo.yml` (it re-renders and force-recreates Periphery).
-3. **BWS rotation** — If `komodo-dean-passkey` was rotated in Bitwarden, re-inject
-   mac-mini secrets (`inject-secrets.sh`), re-run `setup-archlinux-komodo.yml`,
-   and restart Komodo Core on the Mini if the server still shows stale errors.
-4. **Optional Variable** — `KOMODO_PERIPHERY_PASSKEY` is only needed if you
-   still reference it elsewhere; the archlinux server block should not rely on
-   `[[...]]` for `passkey` (see gotcha above).
-
-### Refresh Periphery / passkey (same playbook)
-
-Re-run **`setup-archlinux-komodo.yml`**. It always re-renders `compose.env` from
-BWS (trimmed passkey) and runs **`docker compose ... --force-recreate`** so the
-Periphery container reloads env.
-
-If **`/etc/komodo/.bws-secret`** already exists, you can omit
-`bws_access_token`. Pass `--extra-vars "bws_access_token=..."` when creating or
-rotating the machine-account file.
-
-```bash
-cd /path/to/ansible-playbooks
-ansible-playbook -i inventory/inventory.ini \
-  playbooks/infrastructure/setup-archlinux-komodo.yml
-# First bootstrap or token rotation:
-ansible-playbook -i inventory/inventory.ini \
-  playbooks/infrastructure/setup-archlinux-komodo.yml \
-  --extra-vars "bws_access_token=<BWS_MACHINE_ACCOUNT_TOKEN>"
-```
-
-Then in Komodo Core, **Sync** resources (or wait for poll) and confirm the
-archlinux server shows healthy.
-
-### Manual spot-check (on Arch)
-
-```bash
-# Confirm placeholder is gone (do not paste the value in chat/logs)
-grep '^PERIPHERY_PASSKEYS=' ~/komodo-dean-gitops/archlinux/komodo/compose.env | wc -c
-docker logs komodo-periphery 2>&1 | tail -30
-```
+**Refresh**: re-run `setup-archlinux-komodo.yml` (always re-renders `compose.env` from BWS and
+`docker compose ... --force-recreate`s Periphery). Omit `bws_access_token` once
+`/etc/komodo/.bws-secret` already exists; pass it for first bootstrap or token rotation. Then
+**Sync** resources in Komodo Core and confirm the archlinux server shows healthy.
 
 ## Notes
 
-- GPU host `murderbot` is bare metal Docker only, not part of k3s; `archlinux` is both k3s agent and Docker host
-- After a full cluster reset, ArgoCD will auto-reconcile all applications from git within a few minutes
-- After Ansible completes on a fresh cluster, apply bootstrap secrets and the root-app from `k3s-dean-gitops` to finish GitOps setup
+- GPU host `murderbot` is bare metal Docker only, not part of k3s; `archlinux` is both a legacy
+  k3s agent and a Docker host.
+- After a full legacy-cluster reset, ArgoCD auto-reconciles all applications from git within a
+  few minutes.
+- After Ansible completes on a fresh cluster, apply bootstrap secrets and the root-app from
+  `k3s-dean-gitops` to finish GitOps setup.
