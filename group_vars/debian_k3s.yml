@@ -122,6 +122,10 @@ debian_k3s_kube_vip_version: "v1.2.4"
 debian_k3s_bws_bitwarden_access_token_id: "bc877861-0217-476e-bb58-b417012e990b"  # komodo-dean-bws-access-token-ro
 debian_k3s_argocd_chart_version: "10.9.2"
 debian_k3s_argocd_hostname: "argocd.amer.dev"
+# letsencrypt-staging until the DNS-01 chain is validated end to end (see
+# infra2-app-of-apps-background-draft.md); cut to letsencrypt-prod as a deliberate later step, not
+# automatic. One place to flip it for everything Ansible-managed that references a cluster-issuer.
+debian_k3s_cluster_issuer: "letsencrypt-staging"
 debian_k3s_argocd_values:
   server:
     insecure: true   # plain HTTP/gRPC internally; Ingress below terminates TLS at the edge
@@ -130,7 +134,7 @@ debian_k3s_argocd_values:
     ingress:
       enabled: true
       annotations:
-        cert-manager.io/cluster-issuer: letsencrypt-staging
+        cert-manager.io/cluster-issuer: "{{ debian_k3s_cluster_issuer }}"
         external-dns.alpha.kubernetes.io/hostname: "{{ debian_k3s_argocd_hostname }}"
       hosts:
         - "{{ debian_k3s_argocd_hostname }}"
