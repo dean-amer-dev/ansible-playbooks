@@ -66,6 +66,13 @@ debian_k3s_cilium_values:
   devices: "{{ debian_k3s_lan_interface }}"
   l2announcements:
     enabled: true
+  # No Traefik/nginx on this cluster (k3s built with servicelb/traefik disabled) - Cilium itself is
+  # the Ingress controller. shared mode: one LoadBalancer Service/IP fronts every Ingress object
+  # (conserves the small LB pool above), vs. one IP per Ingress under "dedicated".
+  ingressController:
+    enabled: true
+    loadbalancerMode: shared
+    default: true
   externalIPs:
     enabled: false
   k8sClientRateLimit:
