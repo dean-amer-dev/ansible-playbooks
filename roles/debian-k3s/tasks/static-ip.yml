@@ -1,0 +1,33 @@
+---
+# Codify each node's current DHCP-reserved IP as an explicit static config, plus public DNS
+# resolvers. The IP address itself does NOT change (it's the same address DHCP already reserves
+# for this node's MAC) - only its config SOURCE changes, from "leased at boot" to "static in
+# /etc/network/interfaces". That means this needs no reboot and no live interface bounce: the file
+# edit only matters starting the next boot, and the DNS resolvers below are applied immediately via
+# resolvconf, which doesn't touch interface state at all. Unlike the lan0 rename in network.yml,
+# there is nothing here that could strand the box mid-run.
+- name: Install resolvconf (ifupdown's dns-nameservers hook needs it; also lets us apply DNS now)
+  ansible.builtin.apt:
+    name: resolvconf
+    state: present
+
+- name: Replace lan0's DHCP stanza with a static one (same IP - config source only)
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    marker: "# {mark} ANSIBLE MANAGED lan0"
+    block: |
+      allow-hotplug lan0
+      iface lan0 inet static
+        address {{ debian_k3s_node_ip }}
+        netmask {{ debian_k3s_static_netmask }}
+        gateway {{ debian_k3s_static_gateway }}
+        dns-nameservers {{ debian_k3s_static_dns | join(' ') }}
+      iface lan0 inet6 auto
+  register: debian_k3s_static_ip_applied
+
+- name: Apply the public resolvers now, without waiting for a reboot
+  ansible.builtin.command:
+    cmd: resolvconf -a lan0
+    stdin: "{{ debian_k3s_static_dns | map('regex_replace', '^(.*)$', 'nameserver \\1') | join('\n') }}\n"
+  when: debian_k3s_static_ip_applied is changed
+  changed_when: true

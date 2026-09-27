@@ -21,6 +21,14 @@ debian_k3s_api_vip: "10.100.20.161"
 debian_k3s_extra_tls_sans:
   - "{{ debian_k3s_api_vip }}"
 
+# --- Static IP + public DNS resolvers (codifies the existing DHCP reservation, see static-ip.yml) ---
+# Matches the household convention already used for laptops/RPis (set-static-ip.yml, setup-rpi.yml).
+debian_k3s_static_gateway: "10.100.20.1"
+debian_k3s_static_netmask: "255.255.255.0"
+debian_k3s_static_dns:
+  - "1.1.1.1"
+  - "8.8.8.8"
+
 # --- Cilium (CNI, kube-proxy replacement, L2 LoadBalancer announcements) ---
 debian_k3s_helm_version: "v3.21.0"
 debian_k3s_cilium_cli_version: "v0.20.1"
