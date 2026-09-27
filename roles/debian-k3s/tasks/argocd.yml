@@ -1,0 +1,72 @@
+---
+# ArgoCD is installed once, from the init host, against its local API (kubeconfig k3s.yaml). This
+# is the last thing Ansible installs on this cluster - everything after this point (cert-manager,
+# ESO, reloader, external-dns, OpenEBS, Technitium, and every app) is an ArgoCD Application created
+# directly by OpenTofu (dean-amer-dev/dean-tofu), no git-manifests repo in the loop. See
+# infra2-app-of-apps-plan-draft.md / infra2-app-of-apps-background-draft.md.
+#
+# The Ingress created here is inert until cert-manager/external-dns exist (later, via app-of-apps):
+# both are reconciling controllers that watch Ingress objects continuously, so this pre-existing
+# Ingress gets picked up automatically once each controller comes up - no re-run needed. The
+# LoadBalancer Service is the reachable-immediately fallback and stays permanent.
+- name: ArgoCD (init host only)
+  when: inventory_hostname == debian_k3s_init_host
+  block:
+    # Ansible's password_hash('bcrypt') filter needs passlib on the CONTROL node, and passlib
+    # 1.7.4 (last release) is incompatible with bcrypt>=4 there (its own internal self-test raises
+    # "password cannot be longer than 72 bytes" - a passlib/bcrypt version-shim bug, not a real
+    # password-length issue). Sidestepped entirely by hashing on the remote host with bcrypt's
+    # native API directly instead of going through passlib.
+    - name: python3-bcrypt (for hashing the ArgoCD admin password on the remote host)
+      ansible.builtin.apt:
+        name: python3-bcrypt
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # Fixed salt (see debian_k3s_argocd_admin_password_salt) makes this idempotent - same password
+    # + same salt = same hash every run, so the helm install below only shows changed when the
+    # actual BWS secret value changes. Password passed via env var, never argv, so it never shows
+    # up in the process list.
+    - name: Compute bcrypt hash of the ArgoCD admin password
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import os, bcrypt; print(bcrypt.hashpw(os.environb[b'ARGOCD_ADMIN_PASSWORD'], b'$2b$12${{ debian_k3s_argocd_admin_password_salt }}').decode())"
+      environment:
+        ARGOCD_ADMIN_PASSWORD: "{{ debian_k3s_argocd_admin_password }}"
+      register: debian_k3s_argocd_admin_password_hash
+      changed_when: false
+      no_log: true
+
+    - name: Install ArgoCD (pinned chart)
+      kubernetes.core.helm:
+        name: argocd
+        chart_ref: argo-cd
+        chart_repo_url: https://argoproj.github.io/argo-helm
+        chart_version: "{{ debian_k3s_argocd_chart_version }}"
+        release_namespace: argocd
+        create_namespace: true
+        values: "{{ debian_k3s_argocd_values }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        binary_path: /usr/local/bin/helm
+        wait: true
+        wait_timeout: 10m
+
+    # The one credential nothing else in the system can supply (ESO needs this before it can
+    # create anything of its own). Reused BWS secret, not a new dedicated token - see group_vars.
+    - name: Bitwarden credentials Secret for ESO (created here, consumed once ESO lands via Tofu)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: bitwarden-credentials
+            namespace: default
+          type: Opaque
+          stringData:
+            access-token: "{{ debian_k3s_bitwarden_access_token }}"
+      no_log: true

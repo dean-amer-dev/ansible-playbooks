@@ -66,6 +66,13 @@ debian_k3s_cilium_values:
   devices: "{{ debian_k3s_lan_interface }}"
   l2announcements:
     enabled: true
+  # No Traefik/nginx on this cluster (k3s built with servicelb/traefik disabled) - Cilium itself is
+  # the Ingress controller. shared mode: one LoadBalancer Service/IP fronts every Ingress object
+  # (conserves the small LB pool above), vs. one IP per Ingress under "dedicated".
+  ingressController:
+    enabled: true
+    loadbalancerMode: shared
+    default: true
   externalIPs:
     enabled: false
   k8sClientRateLimit:
@@ -107,3 +114,46 @@ debian_k3s_coredns_values:
 
 # --- kube-vip (control-plane API VIP, ARP mode; static pod on all 3 servers) ---
 debian_k3s_kube_vip_version: "v1.2.4"
+
+# --- ArgoCD (GitOps controller for the app-of-apps/infra/apps tiers; installed by this role,
+# everything it manages from here on is Tofu+ArgoCD, see infra2-app-of-apps-plan-draft.md) ---
+# Reused rather than a dedicated token - "we can always update it" per Alex, 2026-09-27. Currently
+# also feeds Komodo's periphery/admin BWS access on mac-mini-m4 and archlinux.
+debian_k3s_bws_bitwarden_access_token_id: "bc877861-0217-476e-bb58-b417012e990b"  # komodo-dean-bws-access-token-ro
+debian_k3s_bws_argocd_admin_password_id: "d373b795-6651-4bc9-9599-b37101245116"  # argocd-admin
+# Fixed bcrypt salt (not secret - salts never are) so the hash is stable run to run; only the
+# password value (from BWS) and this salt feed the hash, so re-runs stay idempotent.
+debian_k3s_argocd_admin_password_salt: "NB7nb1S9NmykhpGnPhgCq."
+# ArgoCD only re-applies admin.password when this mtime is newer than what's already in the live
+# argocd-secret (its own anti-clobber mechanism against UI-driven password changes) - bump this by
+# hand if the BWS secret's value is ever rotated, so the new password actually takes effect.
+debian_k3s_argocd_admin_password_mtime: "2026-09-27T00:00:00Z"
+debian_k3s_argocd_chart_version: "10.9.2"
+debian_k3s_argocd_hostname: "argocd.amer.dev"
+# letsencrypt-staging until the DNS-01 chain is validated end to end (see
+# infra2-app-of-apps-background-draft.md); cut to letsencrypt-prod as a deliberate later step, not
+# automatic. One place to flip it for everything Ansible-managed that references a cluster-issuer.
+debian_k3s_cluster_issuer: "letsencrypt-staging"
+debian_k3s_argocd_values:
+  server:
+    insecure: true   # plain HTTP/gRPC internally; Ingress below terminates TLS at the edge
+    service:
+      type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
+    ingress:
+      enabled: true
+      annotations:
+        cert-manager.io/cluster-issuer: "{{ debian_k3s_cluster_issuer }}"
+        external-dns.alpha.kubernetes.io/hostname: "{{ debian_k3s_argocd_hostname }}"
+      hosts:
+        - "{{ debian_k3s_argocd_hostname }}"
+      tls:
+        - secretName: argocd-server-tls
+          hosts:
+            - "{{ debian_k3s_argocd_hostname }}"
+  configs:
+    secret:
+      argocdServerAdminPassword: "{{ debian_k3s_argocd_admin_password_hash.stdout }}"
+      argocdServerAdminPasswordMtime: "{{ debian_k3s_argocd_admin_password_mtime }}"
+  # Single replica everywhere (controller/repo-server/server/redis) is the chart default already -
+  # no redis-ha, no controller sharding. Alex, 2026-09-27: "if a node dies running argocd, a new
+  # node will pick it up soon enough... a 5-20 minute outage, everything will be fine."
