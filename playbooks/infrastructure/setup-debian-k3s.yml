@@ -2,14 +2,15 @@
 # Baseline + k3s HA server (embedded etcd) for the GMKtec Debian 13 boxes (group debian_k3s).
 #   1. ssh keys from BWS   2. packages/sysctls   3. remove GUI + disable auto-sleep
 #   4. performance power mode   5. LVM VG on all space past the OS partitions   6. k3s server
-# Cilium and CoreDNS are installed from the init host only; kube-vip is a static pod on every
-# server. ArgoCD/ESO are NOT here yet.
+# Cilium, CoreDNS, kube-vip and ArgoCD are all installed from the init host only. ESO and
+# everything past it (app-of-apps/infra/apps tiers) is NOT Ansible's job - that's Tofu+ArgoCD
+# from here on, see infra2-app-of-apps-plan-draft.md.
 # With flannel disabled, nodes stay NotReady until Cilium is installed.
 #
 # The ONLY secret input is BWS_ACCESS_TOKEN in the environment (never on the command line):
 #   export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
 #   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --limit gmktec-1
-# Add --check --diff for a dry run. Tags: ssh_keys packages headless power storage network k3s
+# Add --check --diff for a dry run. Tags: ssh_keys packages headless power storage network k3s argocd
 # BWS is read on the control node only; the token is never sent to the hosts.
 #
 # First run on a fresh box: if alex's key is not installed yet, the run prompts ONCE for alex's

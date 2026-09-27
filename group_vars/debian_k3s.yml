@@ -107,3 +107,30 @@ debian_k3s_coredns_values:
 
 # --- kube-vip (control-plane API VIP, ARP mode; static pod on all 3 servers) ---
 debian_k3s_kube_vip_version: "v1.2.4"
+
+# --- ArgoCD (GitOps controller for the app-of-apps/infra/apps tiers; installed by this role,
+# everything it manages from here on is Tofu+ArgoCD, see infra2-app-of-apps-plan-draft.md) ---
+# Reused rather than a dedicated token - "we can always update it" per Alex, 2026-09-27. Currently
+# also feeds Komodo's periphery/admin BWS access on mac-mini-m4 and archlinux.
+debian_k3s_bws_bitwarden_access_token_id: "bc877861-0217-476e-bb58-b417012e990b"  # komodo-dean-bws-access-token-ro
+debian_k3s_argocd_chart_version: "10.9.2"
+debian_k3s_argocd_hostname: "argocd.amer.dev"
+debian_k3s_argocd_values:
+  server:
+    insecure: true   # plain HTTP/gRPC internally; Ingress below terminates TLS at the edge
+    service:
+      type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
+    ingress:
+      enabled: true
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-staging
+        external-dns.alpha.kubernetes.io/hostname: "{{ debian_k3s_argocd_hostname }}"
+      hosts:
+        - "{{ debian_k3s_argocd_hostname }}"
+      tls:
+        - secretName: argocd-server-tls
+          hosts:
+            - "{{ debian_k3s_argocd_hostname }}"
+  # Single replica everywhere (controller/repo-server/server/redis) is the chart default already -
+  # no redis-ha, no controller sharding. Alex, 2026-09-27: "if a node dies running argocd, a new
+  # node will pick it up soon enough... a 5-20 minute outage, everything will be fine."

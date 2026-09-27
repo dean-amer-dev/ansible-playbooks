@@ -63,6 +63,10 @@
   ansible.builtin.import_tasks: kube-vip.yml
   tags: [kube-vip]
 
+- name: ArgoCD (GitOps controller) + bitwarden-credentials bootstrap secret
+  ansible.builtin.import_tasks: argocd.yml
+  tags: [argocd]
+
 - name: Static IP + public DNS resolvers (codifies the existing DHCP reservation)
   ansible.builtin.import_tasks: static-ip.yml
   tags: [static-ip]
