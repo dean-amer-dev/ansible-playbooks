@@ -74,7 +74,54 @@
     masked: true
   when: debian_k3s_nm_pkg.stdout.startswith('ii')
 
-- name: Is NetworkManager still running (i.e. we have not rebooted since disabling it)?
+- name: Nothing in /etc/network may still name the old interface (checked BEFORE we trust a reboot to it)
+  ansible.builtin.shell: grep -rIl -w '{{ debian_k3s_nic_facts.device }}' /etc/network 2>/dev/null || true
+  register: debian_k3s_old_name_refs
+  changed_when: false
+  failed_when: debian_k3s_old_name_refs.stdout | trim | length > 0
+  when: debian_k3s_nic_facts.device != 'lan0'
+
+- name: Dry-run udev - which link file will name this NIC at next boot?
+  ansible.builtin.command: udevadm test-builtin net_setup_link /sys/class/net/{{ debian_k3s_nic_facts.device }}
+  register: debian_k3s_udev_test
+  changed_when: false
+  when: debian_k3s_nic_facts.device != 'lan0'
+
+- name: Assert udev will pick our file (it names the NIC lan0)
+  ansible.builtin.assert:
+    that:
+      - "'ID_NET_LINK_FILE=/etc/systemd/network/10-lan0.link' in debian_k3s_udev_test.stdout"
+    fail_msg: "udev would not rename to lan0: {{ debian_k3s_udev_test.stdout }}"
+  when: debian_k3s_nic_facts.device != 'lan0'
+
+# Everything above only edits files; nothing takes effect until the interface is actually renamed,
+# which needs a reboot (you can't rename the NIC carrying your own SSH session live). Sole carve-out
+# to the "never reboot" rule (see CLAUDE.md) - one host at a time (the play's serial: 1), only when
+# the rename is actually pending, waiting for the host to come back and verifying lan0 before
+# moving on. This is what lets the whole playbook bootstrap a clean node in one invocation.
+- name: Reboot to apply the NIC rename to lan0 (Ansible-triggered, one host at a time)
+  when: debian_k3s_nic_facts.device != 'lan0'
+  block:
+    - name: Reboot and wait for lan0 to come up with the expected IP
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        connect_timeout: 10
+        test_command: "ip -4 addr show lan0 | grep -q {{ debian_k3s_node_ip }}"
+        msg: "Rebooting {{ inventory_hostname }} to apply the lan0 NIC rename (Ansible-triggered)"
+
+    - name: Re-gather facts now that the interface is renamed
+      ansible.builtin.setup:
+
+    - name: Confirm lan0 came up with the expected IP post-reboot
+      ansible.builtin.assert:
+        that:
+          - "'lan0' in ansible_facts.interfaces"
+          - ansible_facts.default_ipv4.address == debian_k3s_node_ip
+        fail_msg: "After reboot, lan0 did not come up with {{ debian_k3s_node_ip }} on {{ inventory_hostname }}"
+
+# NetworkManager purge is gated on it no longer being active, which is only true post-reboot (it was
+# disabled+masked above without being stopped, so it keeps running until the box actually restarts).
+- name: Is NetworkManager still running?
   ansible.builtin.command: systemctl is-active NetworkManager
   register: debian_k3s_nm_active
   changed_when: false
@@ -88,27 +135,8 @@
     autoremove: false
   when: debian_k3s_nm_pkg.stdout.startswith('ii') and debian_k3s_nm_active.stdout != 'active'
 
-- name: Nothing in /etc/network may still name the old interface
-  ansible.builtin.shell: grep -rIl -w '{{ debian_k3s_nic_facts.device }}' /etc/network 2>/dev/null || true
-  register: debian_k3s_old_name_refs
-  changed_when: false
-  failed_when: debian_k3s_old_name_refs.stdout | trim | length > 0
-  when: debian_k3s_nic_facts.device != 'lan0'
-
-- name: Dry-run udev - which link file will name this NIC at next boot?
-  ansible.builtin.command: udevadm test-builtin net_setup_link /sys/class/net/{{ debian_k3s_nic_facts.device }}
-  register: debian_k3s_udev_test
-  changed_when: false
-
-- name: Assert udev will pick our file (it names the NIC lan0)
-  ansible.builtin.assert:
-    that:
-      - "'ID_NET_LINK_FILE=/etc/systemd/network/10-lan0.link' in debian_k3s_udev_test.stdout"
-    fail_msg: "udev would not rename to lan0: {{ debian_k3s_udev_test.stdout }}"
-  when: debian_k3s_nic_facts.device != 'lan0'
-
 - name: Report
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: NIC {{ debian_k3s_nic_facts.device }} ({{ debian_k3s_nic_facts.macaddress }}) ->
-      {{ 'already lan0' if debian_k3s_nic_facts.device == 'lan0' else 'becomes lan0 at next reboot (ONE node at a time)' }}
+      {{ 'already lan0' if debian_k3s_nic_facts.device == 'lan0' else 'renamed to lan0 (rebooted this run)' }}

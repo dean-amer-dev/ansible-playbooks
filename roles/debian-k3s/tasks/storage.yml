@@ -100,8 +100,8 @@
 
 # --- OS layout: exactly debian_k3s_os_size_gib for the OS, everything else is the kube pool ---
 # / /var /tmp grow online. /home cannot shrink while mounted, so it is MIGRATED: new smaller LV,
-# rsync, fstab repoint (takes effect at the next reboot, done by Alex), then the next run removes
-# the old LV. Nothing is ever shrunk or wiped in place.
+# rsync, fstab repoint, Ansible reboots (one host at a time, see below) to switch onto it, then the
+# old LV is removed once the box is back. Nothing is ever shrunk or wiped in place.
 - name: Assert the OS layout adds up to the reserved size
   ansible.builtin.assert:
     that: (debian_k3s_os_layout.values() | map('regex_replace', 'g$', '') | map('int') | sum) == (debian_k3s_os_size_gib | int)
@@ -229,7 +229,7 @@
           ansible.builtin.command: blkid -s UUID -o value /dev/{{ debian_k3s_lv['/home'].vg }}/{{ debian_k3s_lv['/home'].lv }}2
           register: debian_k3s_home_uuid
           changed_when: false
-        - name: Point /etc/fstab's /home at the new LV (active after the next reboot)
+        - name: Point /etc/fstab's /home at the new LV (active after the reboot below)
           ansible.builtin.lineinfile:
             path: /etc/fstab
             regexp: '^\S+\s+/home\s'
@@ -237,11 +237,35 @@
         - name: Tell systemd about the new fstab
           ansible.builtin.systemd:
             daemon_reload: true
-    - name: Reboot needed to finish
-      ansible.builtin.debug:
-        msg: >-
-          /home has been copied to LV '{{ debian_k3s_lv['/home'].lv }}2' and fstab updated. REBOOT {{ inventory_hostname }} (Alex does
-          this), then re-run the playbook: it removes the old {{ debian_k3s_lv['/home'].lv }} LV and the pool grows.
+
+    # /home cannot switch onto the new LV while the old one is mounted underneath it. Sole carve-out
+    # to the "never reboot" rule (see CLAUDE.md) - one host at a time (the play's serial: 1), waiting
+    # for the host to come back and verifying /home before moving on. The facts refreshed just below
+    # are what let the existing "Finish the /home migration" block (unchanged, further down this
+    # file) run its old-LV cleanup in this SAME invocation instead of a second, manually-triggered run.
+    - name: Reboot to switch /home onto the new LV (Ansible-triggered, one host at a time)
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        connect_timeout: 10
+        test_command: mountpoint -q /home
+        msg: "Rebooting {{ inventory_hostname }} to switch /home onto its right-sized LV (Ansible-triggered)"
+
+    - name: Re-gather facts after the reboot
+      ansible.builtin.setup:
+
+    - name: Re-check the LV behind /home now that the reboot switched it
+      ansible.builtin.shell: >-
+        lvs --noheadings --separator : -o lv_name,vg_name,lv_size --units b --nosuffix "$(findmnt -no SOURCE /home)"
+        | tr -d ' '
+      register: debian_k3s_home_lv_after_reboot
+      changed_when: false
+
+    - name: Refresh the /home LV+migrate facts so the cleanup block below sees the post-reboot state
+      ansible.builtin.set_fact:
+        debian_k3s_lv: "{{ debian_k3s_lv | combine({'/home': {'lv': home_parts[0], 'vg': home_parts[1], 'size': home_parts[2] | int}}) }}"
+        debian_k3s_home_migrate: "{{ (home_parts[2] | int) > ((debian_k3s_os_layout.home | regex_replace('g$', '') | int) + 1) * 1073741824 }}"
+      vars:
+        home_parts: "{{ debian_k3s_home_lv_after_reboot.stdout.split(':') }}"
 
 # NOTE: the new LV keeps the name `<home>2`. Do NOT lvrename a mounted LV: udev recreates the device node and
 # systemd can unmount /home behind our back (seen on 3 hosts: sessions dropped, ~/.ssh vanished, key login refused).
