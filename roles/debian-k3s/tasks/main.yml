@@ -50,3 +50,7 @@
 - name: k3s server
   ansible.builtin.import_tasks: k3s.yml
   tags: [k3s]
+
+- name: Cilium CNI
+  ansible.builtin.import_tasks: cilium.yml
+  tags: [cilium]

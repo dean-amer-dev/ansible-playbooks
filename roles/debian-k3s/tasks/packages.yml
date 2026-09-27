@@ -42,10 +42,16 @@
   loop:
     - { name: net.ipv4.ip_forward, value: "1" }
     - { name: net.ipv6.conf.all.forwarding, value: "1" }
-    - { name: net.ipv4.conf.all.rp_filter, value: "2" }
-    - { name: net.ipv4.conf.default.rp_filter, value: "2" }
     - { name: fs.inotify.max_user_watches, value: "1048576" }
     - { name: fs.inotify.max_user_instances, value: "8192" }
+
+# rp_filter is owned by Cilium (/etc/sysctl.d/99-zzz-override_cilium.conf sets all.rp_filter=0);
+# managing it here would flip it back on every run.
+- name: Drop rp_filter lines from our sysctl file (Cilium owns them)
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.d/90-k3s.conf
+    regexp: '^net\.ipv4\.conf\.(all|default)\.rp_filter'
+    state: absent
 
 # kubelet refuses to start with swap on (and swap hurts etcd latency).
 - name: Turn swap off now
