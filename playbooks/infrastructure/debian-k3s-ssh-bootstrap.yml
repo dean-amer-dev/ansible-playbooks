@@ -11,12 +11,24 @@
   hosts: debian_k3s
   connection: local
   gather_facts: false
+  # Must be tagged always: this play fetches BWS secrets (ssh keys, join token, etcd-s3 creds)
+  # that k3s.yml needs regardless of which --tags subset a given run asks for. Untagged tasks are
+  # SKIPPED whenever --tags is used at all (unless tagged "always"), so a scoped run like
+  # --tags k3s was silently skipping this whole play - the facts it sets never got populated. This
+  # was invisible before: the only thing gated on them was ssh-key install `when: key_missing`, and
+  # the key was already present, so nothing depended on this play actually running every time -
+  # until the join-token/etcd-s3 fetch did. Found via live verification after a "clean" changed=0
+  # run: the new config.yaml fields were completely absent, meaning the fetch had silently never run.
+  tags: [always]
   vars:
     ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/alex_id_ed25519"
     bws_wanted: >-
       {{ [{'fact': 'debian_k3s_ssh_private_key', 'id': debian_k3s_bws_ssh_private_key_id},
           {'fact': 'debian_k3s_ssh_public_key', 'id': debian_k3s_bws_ssh_public_key_id}]
-         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else []) }}
+         + ([{'fact': 'debian_k3s_token', 'id': debian_k3s_token_bws_id}] if debian_k3s_token_bws_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_access_key', 'id': debian_k3s_bws_backup_access_key_id}] if debian_k3s_bws_backup_access_key_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_secret_key', 'id': debian_k3s_bws_backup_secret_key_id}] if debian_k3s_bws_backup_secret_key_id | length > 0 else [])
+         + ([{'fact': 'debian_k3s_etcd_s3_endpoint', 'id': debian_k3s_bws_backup_endpoint_id}] if debian_k3s_bws_backup_endpoint_id | length > 0 else []) }}
     ssh_opts: >-
       -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes
       -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -i {{ ssh_key }}
