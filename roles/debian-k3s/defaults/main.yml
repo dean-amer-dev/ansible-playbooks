@@ -72,6 +72,12 @@ debian_k3s_os_layout:   # must sum to debian_k3s_os_size_gib (k3s data lives in 
 
 # --- k3s ---
 debian_k3s_version: "v1.36.4+k3s1"   # stable channel 2026-09-26; pinned
+# Which host bootstraps the cluster (cluster-init: true) vs. joins it. Defaults to the first
+# inventory host, but this is an ordinary Ansible variable, not a fixed identity - override it
+# with -e debian_k3s_init_host=<hostname> (or in group_vars/host_vars) when that default host is
+# the one being rebuilt/reinstalled. k3s.yml refuses to proceed (see its safety-check task) if the
+# resolved init host looks fresh while a peer already holds a live cluster, specifically so this
+# never gets used by accident to bootstrap a second, competing cluster.
 debian_k3s_init_host: "{{ groups['debian_k3s'][0] }}"
 debian_k3s_node_ip: "{{ ansible_host }}"
 debian_k3s_api_hostname: k3s.amer.dev

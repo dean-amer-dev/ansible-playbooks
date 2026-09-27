@@ -1,4 +1,45 @@
 ---
+# SAFETY CHECK, runs first: refuse to render cluster-init:true for a fresh/rebuilt init host when a
+# peer in this group already holds a live cluster. Without this, rebuilding whichever host happens
+# to sit in debian_k3s_init_host's inventory slot would silently bootstrap a SECOND, competing
+# cluster instead of rejoining the real one - split-brain at best, silently replacing the live
+# cluster at worst. debian_k3s_init_host is an ordinary variable (defaults/main.yml): if this check
+# fires, re-run with -e debian_k3s_init_host=<a surviving peer> rather than overriding the check.
+- name: Init-host safety check
+  when: inventory_hostname == debian_k3s_init_host
+  block:
+    - name: Does this host already have existing k3s server data (i.e. it is not actually fresh)?
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/db
+      register: debian_k3s_init_has_data
+
+    - name: If this host looks fresh, check whether any peer already has a live cluster
+      ansible.builtin.command: k3s kubectl get --raw /readyz
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['debian_k3s'] | difference([debian_k3s_init_host]) }}"
+      loop_control:
+        label: "{{ item }}"
+      register: debian_k3s_peer_readyz
+      changed_when: false
+      failed_when: false
+      when: not debian_k3s_init_has_data.stat.exists
+
+    - name: Refuse to bootstrap a new cluster here - a peer already has a live one
+      vars:
+        debian_k3s_live_peers: "{{ debian_k3s_peer_readyz.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ debian_k3s_init_host }} is configured as the init host (cluster-init: true) but has no
+          existing k3s server data - it looks freshly (re)installed. {{ debian_k3s_live_peers }}
+          already answers a live k3s API, meaning a real cluster exists without this host.
+          Rendering cluster-init:true here would bootstrap a SECOND, competing cluster and risk
+          split-brain or replacing the real one. Re-run with
+          -e debian_k3s_init_host=<one of {{ debian_k3s_live_peers }}> to pick a surviving node as
+          the init host instead, so {{ debian_k3s_init_host }} rejoins as a normal member.
+      when:
+        - not debian_k3s_init_has_data.stat.exists
+        - debian_k3s_peer_readyz.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length > 0
+
 - name: Resolve join token
   ansible.builtin.set_fact:
     debian_k3s_token: "{{ debian_k3s_token | default('') }}"
