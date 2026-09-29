@@ -129,6 +129,7 @@ cachyos_pacman_packages:
   - realtime-privileges
   - evtest
   - hid-tools
+  - ydotool  # cursor idle-park pointer warps (cursor.idle_park_enabled)
   # Utilities
   - eza
   - bat
