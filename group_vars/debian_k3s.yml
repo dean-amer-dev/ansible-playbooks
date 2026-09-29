@@ -73,6 +73,24 @@ debian_k3s_cilium_values:
     enabled: true
     loadbalancerMode: shared
     default: true
+  # Required alongside ingressController.enabled - without it the operator never registers the
+  # CiliumEnvoyConfig/CiliumClusterwideEnvoyConfig CRDs, even though the agent-level
+  # enable-envoy-config flag is on regardless. Found 2026-09-29: a cilium-agent pod that cold-
+  # starts (not just keeps running from initial install) blocks forever at "Still waiting for
+  # Cilium Operator to register CRDs" because those CRDs don't exist - agents that were already
+  # running from the original install were unaffected, so this went unnoticed until gmktec-3's
+  # agent got restarted to fix an unrelated L2-announcement ARP failure. Any future agent restart
+  # on any node (reboot, crash, upgrade) hits the same wall without this.
+  envoyConfig:
+    enabled: true
+  # loadBalancer.l7.backend was still "disabled" even with envoyConfig.enabled - both are required
+  # together for Cilium's Ingress feature per its own official `cilium install` reference
+  # (envoyConfig.enabled=true + loadBalancer.l7.backend=envoy). This was the actual missing piece;
+  # envoyConfig.enabled alone updated the ConfigMap but never got the operator to register the
+  # CRDs.
+  loadBalancer:
+    l7:
+      backend: envoy
   externalIPs:
     enabled: false
   k8sClientRateLimit:
