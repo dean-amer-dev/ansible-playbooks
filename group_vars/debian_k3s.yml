@@ -151,22 +151,22 @@ debian_k3s_argocd_hostname: "argocd.amer.dev"
 # letsencrypt-staging until the DNS-01 chain is validated end to end (see
 # infra2-app-of-apps-background-draft.md); cut to letsencrypt-prod as a deliberate later step, not
 # automatic. One place to flip it for everything Ansible-managed that references a cluster-issuer.
-debian_k3s_cluster_issuer: "letsencrypt-staging"
+debian_k3s_cluster_issuer: "letsencrypt-prod"
 debian_k3s_argocd_values:
+  global:
+    domain: "{{ debian_k3s_argocd_hostname }}"   # chart 10.x derives hostnames from this, not server.ingress.hosts
   server:
     service:
       type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
     ingress:
       enabled: true
+      ingressClassName: cilium
+      hostname: "{{ debian_k3s_argocd_hostname }}"
+      tls: true   # chart 10.x: cert for `hostname` into secret argocd-server-tls, via the issuer annotation
       annotations:
         cert-manager.io/cluster-issuer: "{{ debian_k3s_cluster_issuer }}"
         external-dns.alpha.kubernetes.io/hostname: "{{ debian_k3s_argocd_hostname }}"
-      hosts:
-        - "{{ debian_k3s_argocd_hostname }}"
-      tls:
-        - secretName: argocd-server-tls
-          hosts:
-            - "{{ debian_k3s_argocd_hostname }}"
+        external-dns.alpha.kubernetes.io/ttl: "300"
   configs:
     params:
       server.insecure: true   # chart 10.x ignores server.insecure; TLS terminates at the ingress
