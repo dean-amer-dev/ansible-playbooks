@@ -154,7 +154,6 @@ debian_k3s_argocd_hostname: "argocd.amer.dev"
 debian_k3s_cluster_issuer: "letsencrypt-staging"
 debian_k3s_argocd_values:
   server:
-    insecure: true   # plain HTTP/gRPC internally; Ingress below terminates TLS at the edge
     service:
       type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
     ingress:
@@ -169,6 +168,8 @@ debian_k3s_argocd_values:
           hosts:
             - "{{ debian_k3s_argocd_hostname }}"
   configs:
+    params:
+      server.insecure: true   # chart 10.x ignores server.insecure; TLS terminates at the ingress
     secret:
       argocdServerAdminPassword: "{{ debian_k3s_argocd_admin_password_hash.stdout }}"
       argocdServerAdminPasswordMtime: "{{ debian_k3s_argocd_admin_password_mtime }}"
