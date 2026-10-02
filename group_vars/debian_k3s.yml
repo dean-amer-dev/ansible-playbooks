@@ -155,7 +155,35 @@ debian_k3s_cluster_issuer: "letsencrypt-prod"
 debian_k3s_argocd_values:
   global:
     domain: "{{ debian_k3s_argocd_hostname }}"   # chart 10.x derives hostnames from this, not server.ingress.hosts
+  # HA: every component 2+ replicas with a PDB, Redis via redis-ha (3 + haproxy). dynamicClusterDistribution
+  # makes the application controller a Deployment that redistributes shards when a replica dies; the
+  # default StatefulSet stays Terminating on a dead node and ArgoCD stops reconciling (seen 2026-10-02,
+  # gmktec-3 shutdown test).
+  controller:
+    replicas: 2
+    dynamicClusterDistribution: true
+    pdb:
+      enabled: true
+      minAvailable: 1
+  repoServer:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+  applicationSet:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+  redis:
+    enabled: false
+  redis-ha:
+    enabled: true
   server:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
     service:
       type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
     ingress:
