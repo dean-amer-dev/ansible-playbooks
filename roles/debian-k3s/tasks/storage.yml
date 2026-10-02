@@ -1,107 +1,42 @@
 ---
-# Storage pool for kube volumes (OpenEBS Local PV LVM consumes a VG later).
-# Preference order, NEVER touching an existing VG/PV/LV contents:
-#   1. a dedicated VG `debian_k3s_lvm_vg` already exists -> use it
-#   2. unpartitioned free disk space (or a partition labelled `debian_k3s_lvm_partlabel`) -> make that VG
-#   3. otherwise adopt the free extents of the VG that holds / (Debian's guided-LVM install layout)
-# Result is published as the fact `debian_k3s_storage_vg`. Also grows the /var LV: k3s keeps
-# containerd images, etcd and logs under /var, and the installer default (4G) is far too small.
-- name: Find the volume group and LV behind /
-  ansible.builtin.shell: lvs --noheadings -o vg_name "$(findmnt -no SOURCE /)" | tr -d ' '
-  register: debian_k3s_root_vg
+# Disk layout. Assumes Debian's guided-LVM install: / /var /tmp /home are LVs in one VG.
+# The OS LVs are sized to debian_k3s_os_layout; everything else in that VG is the OpenEBS
+# Local PV LVM pool for PVCs. Published as the fact `debian_k3s_storage_vg`.
+# / /var /tmp grow online. /home cannot shrink while mounted, so it is MIGRATED (new LV, rsync,
+# fstab repoint, drain, Ansible-triggered reboot, uncordon, old LV removed). Nothing is ever
+# shrunk or wiped in place.
+- name: Find the volume group behind each OS mount
+  ansible.builtin.shell: lvs --noheadings -o vg_name "$(findmnt -no SOURCE {{ item }})" | tr -d ' '
+  loop: ["/", "/var"]
+  register: debian_k3s_os_vgs
   changed_when: false
+  check_mode: false
   failed_when: false
 
-- name: Check for a dedicated data volume group
-  ansible.builtin.command: vgs --noheadings -o vg_name {{ debian_k3s_lvm_vg }}
-  register: debian_k3s_vg
-  changed_when: false
-  failed_when: false
-
-- name: Look for an already-created data partition (by partlabel)
-  ansible.builtin.stat:
-    path: "/dev/disk/by-partlabel/{{ debian_k3s_lvm_partlabel }}"
-  register: debian_k3s_pv_part
-  when: debian_k3s_vg.rc != 0
-
-- name: Read disk layout including free space
-  ansible.builtin.command: parted -ms {{ debian_k3s_lvm_disk }} unit B print free
-  register: debian_k3s_parted
-  changed_when: false
-  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
-
-- name: Work out the trailing free region and next partition number
-  ansible.builtin.set_fact:
-    debian_k3s_free_line: "{{ (debian_k3s_parted.stdout_lines | select('search', ':free;$') | list | last).split(':') }}"
-    debian_k3s_next_part: "{{ (debian_k3s_parted.stdout_lines | select('match', '^[0-9]+:') | reject('search', ':free;$') | map('split', ':') | map('first') | map('int') | list + [0]) | max + 1 }}"
-  when: debian_k3s_vg.rc != 0 and not debian_k3s_pv_part.stat.exists
-
-- name: Decide whether to build a dedicated data VG
-  ansible.builtin.set_fact:
-    debian_k3s_make_vg: >-
-      {{ debian_k3s_vg.rc != 0 and (debian_k3s_pv_part.stat.exists
-         or (debian_k3s_free_line[3] | regex_replace('B$', '') | int) >= (debian_k3s_lvm_min_free_gib | int * 1073741824)) }}
-    debian_k3s_storage_vg: "{{ debian_k3s_lvm_vg if debian_k3s_vg.rc == 0 else debian_k3s_root_vg.stdout | trim }}"
-
-- name: Build the data VG from free disk space
-  when: debian_k3s_make_vg | bool
-  block:
-    - name: Create data partition in the free space
-      community.general.parted:
-        device: "{{ debian_k3s_lvm_disk }}"
-        label: gpt
-        number: "{{ debian_k3s_next_part }}"
-        name: "{{ debian_k3s_lvm_partlabel }}"
-        part_start: "{{ ((debian_k3s_free_line[1] | regex_replace('B$', '') | int / 1048576) | round(0, 'ceil') | int) }}MiB"
-        part_end: 100%
-        flags: [lvm]
-        state: present
-      when: not debian_k3s_pv_part.stat.exists
-      register: debian_k3s_new_part
-
-    - name: Let udev publish the new partition
-      ansible.builtin.command: udevadm settle
-      changed_when: false
-      when: debian_k3s_new_part is changed
-
-    - name: Create the volume group on the data partition
-      community.general.lvg:
-        vg: "{{ debian_k3s_lvm_vg }}"
-        pvs: "/dev/disk/by-partlabel/{{ debian_k3s_lvm_partlabel }}"
-        state: present
-
-    - name: Pool is the new dedicated VG
-      ansible.builtin.set_fact:
-        debian_k3s_storage_vg: "{{ debian_k3s_lvm_vg }}"
-
-- name: Read free space in the storage VG
-  ansible.builtin.command: vgs --noheadings --units b --nosuffix -o vg_free {{ debian_k3s_storage_vg }}
-  register: debian_k3s_pool_free
-  changed_when: false
-  failed_when: debian_k3s_storage_vg | length == 0
-
-- name: Fail if there is no usable storage pool
+- name: Require / and /var to be LVs in the same volume group
   ansible.builtin.assert:
-    that: (debian_k3s_pool_free.stdout | trim | int) >= (debian_k3s_lvm_min_free_gib | int * 1073741824)
+    that:
+      - debian_k3s_os_vgs.results | map(attribute='stdout') | select | list | length == 2
+      - debian_k3s_os_vgs.results | map(attribute='stdout') | unique | list | length == 1
     fail_msg: >-
-      No dedicated VG and no free disk space, and VG '{{ debian_k3s_storage_vg }}' has only
-      {{ ((debian_k3s_pool_free.stdout | trim | int) / 1073741824) | round(1) }} GiB free (< {{ debian_k3s_lvm_min_free_gib }} GiB).
-      Nothing was created.
+      / and /var on {{ inventory_hostname }} must both be LVs in one VG (Debian guided-LVM layout).
+      Got {{ debian_k3s_os_vgs.results | map(attribute='stdout') | list }}. Nothing was changed.
+
+- name: Storage pool is the OS volume group
+  ansible.builtin.set_fact:
+    debian_k3s_storage_vg: "{{ debian_k3s_os_vgs.results[0].stdout }}"
 
 - name: Refuse to touch storage if /home is in fstab but not mounted
   ansible.builtin.shell: grep -qE '^[^#]\S+\s+/home\s' /etc/fstab && ! mountpoint -q /home && echo UNMOUNTED || echo ok
   register: debian_k3s_home_mounted
   changed_when: false
+  check_mode: false
 
 - name: Fail clearly if /home is not mounted
   ansible.builtin.assert:
     that: debian_k3s_home_mounted.stdout == 'ok'
     fail_msg: "/home is in /etc/fstab but is NOT mounted on {{ inventory_hostname }}; run `mount /home` (or reboot) and re-run. Not touching storage."
 
-# --- OS layout: exactly debian_k3s_os_size_gib for the OS, everything else is the kube pool ---
-# / /var /tmp grow online. /home cannot shrink while mounted, so it is MIGRATED: new smaller LV,
-# rsync, fstab repoint, Ansible reboots (one host at a time, see below) to switch onto it, then the
-# old LV is removed once the box is back. Nothing is ever shrunk or wiped in place.
 - name: Assert the OS layout adds up to the reserved size
   ansible.builtin.assert:
     that: (debian_k3s_os_layout.values() | map('regex_replace', 'g$', '') | map('int') | sum) == (debian_k3s_os_size_gib | int)
@@ -114,6 +49,7 @@
   loop: ["/", "/var", "/tmp", "/home"]
   register: debian_k3s_mnt_lv
   changed_when: false
+  check_mode: false
   failed_when: false
 
 - name: Start with an empty LV index
@@ -149,11 +85,13 @@
   ansible.builtin.command: swapon --noheadings --show=NAME
   register: debian_k3s_swap_active
   changed_when: false
+  check_mode: false
 
 - name: Find swap LVs in the OS volume group
   ansible.builtin.shell: lvs --noheadings -o lv_name,lv_path -S 'lv_name=~^swap' {{ debian_k3s_lv['/'].vg }} | xargs -n2
   register: debian_k3s_swap_lvs
   changed_when: false
+  check_mode: false
   when: "'/' in debian_k3s_lv"
 
 - name: Make initramfs stop looking for a resume (swap) device
@@ -190,6 +128,7 @@
     u=$(blkid -s UUID -o value /dev/{{ debian_k3s_lv['/home'].vg }}/{{ debian_k3s_lv['/home'].lv }}2 2>/dev/null) && [ -n "$u" ] && grep -q "^UUID=$u /home " /etc/fstab && echo yes || echo no
   register: debian_k3s_home_prepared
   changed_when: false
+  check_mode: false
   when: debian_k3s_home_migrate | bool
 
 - name: Migrate /home to a right-sized LV
@@ -211,29 +150,35 @@
           community.general.filesystem:
             fstype: ext4
             dev: "/dev/{{ debian_k3s_lv['/home'].vg }}/{{ debian_k3s_lv['/home'].lv }}2"
+          when: not ansible_check_mode
         - name: Mount it temporarily (not in fstab)
           ansible.posix.mount:
             path: /mnt/home-new
             src: "/dev/{{ debian_k3s_lv['/home'].vg }}/{{ debian_k3s_lv['/home'].lv }}2"
             fstype: ext4
             state: ephemeral
+          when: not ansible_check_mode
         - name: Copy /home (preserving owners, ACLs, xattrs, hardlinks)
           ansible.builtin.command: rsync -aHAX --numeric-ids --delete -i /home/ /mnt/home-new/
           register: debian_k3s_home_rsync
           changed_when: debian_k3s_home_rsync.stdout_lines | length > 0
+          when: not ansible_check_mode
         - name: Unmount the temporary mount
           ansible.posix.mount:
             path: /mnt/home-new
             state: unmounted
+          when: not ansible_check_mode
         - name: Read the new filesystem UUID
           ansible.builtin.command: blkid -s UUID -o value /dev/{{ debian_k3s_lv['/home'].vg }}/{{ debian_k3s_lv['/home'].lv }}2
           register: debian_k3s_home_uuid
           changed_when: false
+          when: not ansible_check_mode
         - name: Point /etc/fstab's /home at the new LV (active after the reboot below)
           ansible.builtin.lineinfile:
             path: /etc/fstab
             regexp: '^\S+\s+/home\s'
             line: "UUID={{ debian_k3s_home_uuid.stdout }} /home ext4 defaults 0 2"
+          when: not ansible_check_mode
         - name: Tell systemd about the new fstab
           ansible.builtin.systemd:
             daemon_reload: true
@@ -243,6 +188,41 @@
     # for the host to come back and verifying /home before moving on. The facts refreshed just below
     # are what let the existing "Finish the /home migration" block (unchanged, further down this
     # file) run its old-LV cleanup in this SAME invocation instead of a second, manually-triggered run.
+    - name: Is k3s running?
+      ansible.builtin.command: systemctl is-active k3s
+      register: debian_k3s_active
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: Drain before the reboot
+      when: debian_k3s_active.rc == 0
+      block:
+        - name: Leave a marker so a re-run knows this play cordoned the node
+          ansible.builtin.file:
+            path: "{{ debian_k3s_drain_marker }}"
+            state: touch
+            mode: "0644"
+        - name: Drain
+          ansible.builtin.command: >-
+            k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+            --timeout={{ debian_k3s_drain_timeout }}
+          changed_when: true
+      rescue:
+        - name: Uncordon after a failed drain
+          ansible.builtin.command: k3s kubectl uncordon {{ inventory_hostname }}
+          changed_when: true
+        - name: Clear the marker
+          ansible.builtin.file:
+            path: "{{ debian_k3s_drain_marker }}"
+            state: absent
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: >-
+              Drain of {{ inventory_hostname }} did not finish in {{ debian_k3s_drain_timeout }}.
+              Uncordoned, no reboot. The new home LV is prepared and in fstab; it takes effect on
+              the next successful run.
+
     - name: Reboot to switch /home onto the new LV (Ansible-triggered, one host at a time)
       ansible.builtin.reboot:
         reboot_timeout: 300
@@ -259,6 +239,7 @@
         | tr -d ' '
       register: debian_k3s_home_lv_after_reboot
       changed_when: false
+      check_mode: false
 
     - name: Refresh the /home LV+migrate facts so the cleanup block below sees the post-reboot state
       ansible.builtin.set_fact:
@@ -266,6 +247,29 @@
         debian_k3s_home_migrate: "{{ (home_parts[2] | int) > ((debian_k3s_os_layout.home | regex_replace('g$', '') | int) + 1) * 1073741824 }}"
       vars:
         home_parts: "{{ debian_k3s_home_lv_after_reboot.stdout.split(':') }}"
+
+- name: Did this play cordon the node?
+  ansible.builtin.stat:
+    path: "{{ debian_k3s_drain_marker }}"
+  register: debian_k3s_drain_marker_stat
+
+- name: Bring the node back into the cluster
+  when: debian_k3s_drain_marker_stat.stat.exists
+  block:
+    - name: Wait for the node to be Ready
+      ansible.builtin.command: k3s kubectl wait node/{{ inventory_hostname }} --for=condition=Ready --timeout=60s
+      register: debian_k3s_node_ready
+      retries: 20
+      delay: 15
+      until: debian_k3s_node_ready.rc == 0
+      changed_when: false
+    - name: Uncordon
+      ansible.builtin.command: k3s kubectl uncordon {{ inventory_hostname }}
+      changed_when: true
+    - name: Clear the marker
+      ansible.builtin.file:
+        path: "{{ debian_k3s_drain_marker }}"
+        state: absent
 
 # NOTE: the new LV keeps the name `<home>2`. Do NOT lvrename a mounted LV: udev recreates the device node and
 # systemd can unmount /home behind our back (seen on 3 hosts: sessions dropped, ~/.ssh vanished, key login refused).
@@ -288,9 +292,27 @@
   ansible.builtin.command: vgs --noheadings --units b --nosuffix -o vg_free {{ debian_k3s_storage_vg }}
   register: debian_k3s_pool_free_after
   changed_when: false
+  check_mode: false
 
 - name: Report the storage pool for kube volumes
   ansible.builtin.debug:
     msg: >-
       Kube volume pool: VG '{{ debian_k3s_storage_vg }}', {{ ((debian_k3s_pool_free_after.stdout | trim | int) / 1073741824) | round(1) }} GiB free
       (OpenEBS LVM StorageClass vgpattern = ^{{ debian_k3s_storage_vg }}$).
+
+- name: journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Cap the journal size (log rotation)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/size.conf
+    content: |
+      [Journal]
+      SystemMaxUse={{ debian_k3s_journald_max_use }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
