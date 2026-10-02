@@ -85,16 +85,19 @@ their fix:
 
 ## Storage: LVM layout and the OS/kube-volume-pool split
 
-`roles/debian-k3s/tasks/storage.yml` never touches an existing VG's *contents* — it only grows
-`/`, `/var`, `/tmp` online (grow-only, `resizefs: true`) and migrates `/home` to a right-sized LV
-(see reboot section above). The remaining free space in the VG becomes the OpenEBS Local PV LVM
-pool (`vgpattern = ^{{ debian_k3s_storage_vg }}$`).
+`roles/debian-k3s/tasks/storage.yml` assumes Debian's guided-LVM install (`/`, `/var`, `/tmp`,
+`/home` are LVs in one VG). It sizes the OS LVs to `debian_k3s_os_layout` (root 20G, var 60G,
+tmp 4G, home 4G). `/`, `/var` and `/tmp` grow online; `/home` is migrated (see reboot section above).
+Everything else in the VG is the OpenEBS Local PV LVM pool for PVCs. It never touches an LV's
+contents in place.
 
-- **"No dedicated VG and no free disk space" assertion failure**: means neither a pre-existing
-  `data` VG, nor a `k3s-data`-partlabeled partition, nor enough trailing free space
-  (`debian_k3s_lvm_min_free_gib`, default 50 GiB) exists on `debian_k3s_lvm_disk` (default
-  `/dev/nvme0n1`), *and* the VG behind `/` doesn't have enough free extents either. Free up space
-  or attach more disk — this task creates nothing destructively, so there's no unwind needed.
+- **"/ and /var must both be LVs in one VG" assertion failure**: the host wasn't installed with
+  guided LVM. Reinstall with guided LVM; nothing was changed.
+- **Drain timed out before the `/home` reboot**: the node is uncordoned and the play stops. The
+  new home LV is already prepared and in fstab, so the next successful run just drains, reboots
+  and cleans up. Find what blocked the drain (`kubectl get pdb -A`) before re-running.
+- **Node left cordoned after an interrupted run**: re-run the same tags. The marker
+  `/var/lib/rancher/k3s/.ansible-drained` makes the play wait for Ready and uncordon.
 - **"/home is in fstab but is NOT mounted" assertion failure**: storage tasks refuse to run at all
   in this state (a previous migration or manual intervention could have left `/home` unmounted).
   `mount /home` (or reboot) on the affected host, then re-run.

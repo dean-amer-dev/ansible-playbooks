@@ -35,6 +35,10 @@ ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debia
 
 Tags: `ssh_keys packages headless power storage network preflight k3s cilium coredns kube-vip`.
 
+**Disk layout** (`storage`): root 20G, /var 60G (images, etcd, kubelet, logs), /tmp 4G, /home 4G;
+the rest of the VG is the OpenEBS PVC pool. The journal is capped at 1G. Shrinking `/home`
+drains the node, reboots it and uncordons it. Run it with `--limit`, one host at a time.
+
 **SSH access only** (installs alex's key + optional passwordless sudo, nothing else):
 
 ```bash

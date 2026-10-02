@@ -55,20 +55,17 @@ debian_k3s_gui_packages:
   - xwayland
 
 # --- storage ---
-# Everything past the OS partitions goes into one LVM VG (OpenEBS Local PV LVM consumes it later).
-# An existing VG is NEVER touched. The PV partition is found by GPT partlabel, else created in
-# the trailing free space of the disk.
-debian_k3s_lvm_disk: /dev/nvme0n1
-debian_k3s_lvm_vg: data
-debian_k3s_lvm_partlabel: k3s-data
-debian_k3s_lvm_min_free_gib: 50
-# OS gets exactly this much; everything else in the VG is the kube volume pool.
-debian_k3s_os_size_gib: 128
-debian_k3s_os_layout:   # must sum to debian_k3s_os_size_gib (k3s data lives in /var, so it is big)
+# Assumes Debian guided-LVM: / /var /tmp /home are LVs in one VG. The OS LVs get exactly
+# debian_k3s_os_layout; everything else in that VG is the OpenEBS PVC pool.
+debian_k3s_os_size_gib: 88
+debian_k3s_os_layout:   # must sum to debian_k3s_os_size_gib; /var holds images, etcd, kubelet, logs
   root: 20g
-  var: 40g
+  var: 60g
   tmp: 4g
-  home: 64g
+  home: 4g
+debian_k3s_drain_timeout: 600s
+debian_k3s_drain_marker: /var/lib/rancher/k3s/.ansible-drained
+debian_k3s_journald_max_use: 1G
 
 # --- k3s ---
 debian_k3s_version: "v1.36.4+k3s1"   # stable channel 2026-09-26; pinned
