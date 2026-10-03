@@ -151,24 +151,53 @@ debian_k3s_argocd_hostname: "argocd.amer.dev"
 # letsencrypt-staging until the DNS-01 chain is validated end to end (see
 # infra2-app-of-apps-background-draft.md); cut to letsencrypt-prod as a deliberate later step, not
 # automatic. One place to flip it for everything Ansible-managed that references a cluster-issuer.
-debian_k3s_cluster_issuer: "letsencrypt-staging"
+debian_k3s_cluster_issuer: "letsencrypt-prod"
 debian_k3s_argocd_values:
+  global:
+    domain: "{{ debian_k3s_argocd_hostname }}"   # chart 10.x derives hostnames from this, not server.ingress.hosts
+  # HA: every component 2+ replicas with a PDB, Redis via redis-ha (3 + haproxy). dynamicClusterDistribution
+  # makes the application controller a Deployment that redistributes shards when a replica dies; the
+  # default StatefulSet stays Terminating on a dead node and ArgoCD stops reconciling (seen 2026-10-02,
+  # gmktec-3 shutdown test).
+  controller:
+    replicas: 2
+    dynamicClusterDistribution: true
+    pdb:
+      enabled: true
+      minAvailable: 1
+  repoServer:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+  applicationSet:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+  redis:
+    enabled: false
+  redis-ha:
+    enabled: true
   server:
-    insecure: true   # plain HTTP/gRPC internally; Ingress below terminates TLS at the edge
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
     service:
       type: LoadBalancer   # Cilium L2, always on - reachable immediately post-bootstrap
     ingress:
       enabled: true
+      ingressClassName: cilium
+      hostname: "{{ debian_k3s_argocd_hostname }}"
+      tls: true   # chart 10.x: cert for `hostname` into secret argocd-server-tls, via the issuer annotation
       annotations:
         cert-manager.io/cluster-issuer: "{{ debian_k3s_cluster_issuer }}"
         external-dns.alpha.kubernetes.io/hostname: "{{ debian_k3s_argocd_hostname }}"
-      hosts:
-        - "{{ debian_k3s_argocd_hostname }}"
-      tls:
-        - secretName: argocd-server-tls
-          hosts:
-            - "{{ debian_k3s_argocd_hostname }}"
+        external-dns.alpha.kubernetes.io/ttl: "300"
   configs:
+    params:
+      server.insecure: true   # chart 10.x ignores server.insecure; TLS terminates at the ingress
     secret:
       argocdServerAdminPassword: "{{ debian_k3s_argocd_admin_password_hash.stdout }}"
       argocdServerAdminPasswordMtime: "{{ debian_k3s_argocd_admin_password_mtime }}"
