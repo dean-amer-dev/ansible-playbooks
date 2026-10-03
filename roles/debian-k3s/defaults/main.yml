@@ -91,3 +91,19 @@ debian_k3s_eviction_hard: "memory.available<1Gi,nodefs.available<10%"
 debian_k3s_cpu_weight: 1000
 debian_k3s_etcd_snapshot_schedule: "0 */6 * * *"
 debian_k3s_etcd_snapshot_retention: 28
+
+# --- longhorn (replicated block storage, deployed by dean-tofu's app-of-apps ApplicationSet) ---
+# Longhorn's v1 engine stores replicas as files on a mounted filesystem (it cannot consume a raw
+# block device or a PVC), so Ansible carves a dedicated LV out of the storage VG's free extents
+# and mounts it at Longhorn's default data path. The Longhorn chart's default disk picks it up.
+debian_k3s_longhorn_lv: longhorn
+debian_k3s_longhorn_size: 200g
+debian_k3s_longhorn_mount: /var/lib/longhorn
+debian_k3s_longhorn_packages:
+  - open-iscsi
+  - nfs-common
+  - cryptsetup
+  - dmsetup
+debian_k3s_longhorn_modules:
+  - iscsi_tcp
+  - dm_crypt
