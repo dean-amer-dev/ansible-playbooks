@@ -45,8 +45,8 @@
     replace: lan0
   when: debian_k3s_ifupdown.stat.exists and debian_k3s_nic_facts.device != 'lan0'
 
-- name: Does ifupdown already have a stanza for lan0 (outside our managed block)?
-  ansible.builtin.shell: sed '/ANSIBLE MANAGED lan0/,/ANSIBLE MANAGED lan0/d' /etc/network/interfaces | grep -c '^iface lan0 inet dhcp' || true
+- name: Does ifupdown already have an IPv4 stanza for lan0 (dhcp or static, managed block included)?
+  ansible.builtin.shell: grep -cE '^iface lan0 inet (dhcp|static)' /etc/network/interfaces || true
   register: debian_k3s_lan0_stanza
   changed_when: false
   when: debian_k3s_ifupdown.stat.exists
