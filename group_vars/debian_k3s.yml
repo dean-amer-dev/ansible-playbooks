@@ -50,7 +50,7 @@ debian_k3s_helm_version: "v3.21.0"
 debian_k3s_cilium_cli_version: "v0.20.1"
 debian_k3s_cilium_chart_version: "1.20.2"
 debian_k3s_lb_pool_start: "10.100.20.170"
-debian_k3s_lb_pool_stop: "10.100.20.189"
+debian_k3s_lb_pool_stop: "10.100.20.200"
 debian_k3s_lan_interface: lan0
 debian_k3s_cilium_values:
   k8sServiceHost: "127.0.0.1"
