@@ -33,7 +33,7 @@ ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debia
 ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --check --diff
 ```
 
-Tags: `ssh_keys packages headless power storage network preflight k3s cilium coredns kube-vip`.
+Tags: `ssh_keys packages headless power storage longhorn network preflight k3s cilium coredns kube-vip`.
 
 **SSH access only** (installs alex's key + optional passwordless sudo, nothing else):
 

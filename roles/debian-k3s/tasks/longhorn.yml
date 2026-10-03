@@ -1,0 +1,55 @@
+---
+# Longhorn node prerequisites: iSCSI initiator + NFS client + crypto packages, kernel modules, and a
+# dedicated LV mounted at /var/lib/longhorn carved from the storage VG's free extents. Grow-only:
+# an existing LV is never shrunk, reformatted or unmounted.
+- name: Find the storage volume group (the VG that holds /)
+  ansible.builtin.shell: lvs --noheadings -o vg_name "$(findmnt -no SOURCE /)" | tr -d ' '
+  register: debian_k3s_longhorn_vg
+  changed_when: false
+
+- name: Install Longhorn prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ debian_k3s_longhorn_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start iscsid
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+
+- name: Load Longhorn kernel modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/longhorn.conf
+    content: "{{ debian_k3s_longhorn_modules | join('\n') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Load Longhorn kernel modules now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ debian_k3s_longhorn_modules }}"
+
+- name: Create the Longhorn data LV
+  community.general.lvol:
+    vg: "{{ debian_k3s_longhorn_vg.stdout }}"
+    lv: "{{ debian_k3s_longhorn_lv }}"
+    size: "{{ debian_k3s_longhorn_size }}"
+    shrink: false
+
+- name: Make the filesystem (never reformats an existing one)
+  community.general.filesystem:
+    fstype: ext4
+    dev: "/dev/{{ debian_k3s_longhorn_vg.stdout }}/{{ debian_k3s_longhorn_lv }}"
+
+- name: Mount the Longhorn data LV (and persist it in fstab)
+  ansible.posix.mount:
+    path: "{{ debian_k3s_longhorn_mount }}"
+    src: "/dev/{{ debian_k3s_longhorn_vg.stdout }}/{{ debian_k3s_longhorn_lv }}"
+    fstype: ext4
+    opts: defaults,noatime
+    state: mounted
