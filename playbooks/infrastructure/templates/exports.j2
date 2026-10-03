@@ -6,5 +6,5 @@
 # vault for why (no NFS username/password; auth deferred to a later SMB
 # phase).
 {% for export in nfs_exports %}
-{{ export }} {{ nfs_allowed_client }}({{ nfs_export_options }})
+{{ export.path }}{% for c in export.clients %} {{ c }}({{ nfs_export_options }}){% endfor %}{{ '' }}
 {% endfor %}
