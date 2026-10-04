@@ -1,0 +1,60 @@
+---
+- name: Assert Debian host
+  ansible.builtin.assert:
+    that: ansible_os_family == 'Debian'
+    fail_msg: gpu-worker driver tasks only support Debian-family hosts
+
+- name: Install kernel headers for the running kernel (DKMS needs them)
+  ansible.builtin.apt:
+    name: "linux-headers-{{ ansible_kernel }}"
+    state: present
+
+- name: Pin NVIDIA driver packages to {{ gpu_worker_nvidia_driver_version }}
+  ansible.builtin.copy:
+    dest: "{{ gpu_worker_apt_pin_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Package: *nvidia* libcuda1 libcudadebugger1 libnvcuvid1 libnvoptix1
+      Pin: version {{ gpu_worker_nvidia_driver_version }}
+      Pin-Priority: 1001
+
+- name: Install NVIDIA driver and open kernel module at the pinned version
+  ansible.builtin.apt:
+    name:
+      - "nvidia-driver={{ gpu_worker_nvidia_driver_version }}"
+      - "nvidia-kernel-open-dkms={{ gpu_worker_nvidia_driver_version }}"
+    state: present
+    allow_downgrade: true
+    # No update_cache: apt's cache refresh fails host-wide on any unrelated repo with
+    # a bad signing key (cli.github.com on murderbot, 2026-10), which would block
+    # this role. The driver pin resolves against the lists already on the host.
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Read DKMS status for the pinned module
+  ansible.builtin.command: dkms status nvidia
+  register: gpu_worker_dkms
+  changed_when: false
+
+- name: Fail unless DKMS built the pinned module for the running kernel
+  ansible.builtin.assert:
+    that:
+      - >-
+        gpu_worker_dkms.stdout is search((gpu_worker_nvidia_driver_version.split('-')[0] ~ ', ' ~ ansible_kernel) | regex_escape ~ ', .*: installed')
+    fail_msg: "DKMS does not show nvidia {{ gpu_worker_nvidia_driver_version }} installed for {{ ansible_kernel }}: {{ gpu_worker_dkms.stdout }}"
+
+- name: Read loaded kernel module version
+  ansible.builtin.slurp:
+    src: /proc/driver/nvidia/version
+  register: gpu_worker_loaded_version
+  failed_when: false
+
+- name: Report whether a reboot is needed (never rebooted by this role)
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'REBOOT REQUIRED: loaded nvidia module is not ' ~ gpu_worker_nvidia_driver_version.split('-')[0] ~ '. Alex reboots; this role never does.'
+      if (gpu_worker_loaded_version.content is not defined or
+          gpu_worker_nvidia_driver_version.split('-')[0] not in (gpu_worker_loaded_version.content | b64decode))
+      else 'Loaded nvidia module matches ' ~ gpu_worker_nvidia_driver_version.split('-')[0] ~ '; no reboot needed.' }}

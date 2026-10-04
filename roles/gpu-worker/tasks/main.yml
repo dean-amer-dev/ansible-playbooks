@@ -1,0 +1,4 @@
+---
+- name: Install NVIDIA driver at the pinned version
+  ansible.builtin.import_tasks: driver.yml
+  tags: [gpu-worker, gpu-worker-driver]

@@ -1,0 +1,15 @@
+---
+# Bring murderbot to the NVIDIA driver level the LLM runner stack needs.
+# Never reboots: if the loaded module is stale the play says so and Alex reboots.
+#
+# Usage:
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-gpu-worker.yml --check --diff
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-gpu-worker.yml
+
+- name: Set up murderbot as a GPU worker
+  hosts: murderbot
+  become: true
+  gather_facts: true
+  roles:
+    - role: ../../roles/gpu-worker
+      tags: [gpu-worker]

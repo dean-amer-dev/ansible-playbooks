@@ -1,0 +1,12 @@
+---
+# Role: gpu-worker
+# Brings a Debian NVIDIA host (murderbot) to the driver level the LLM runner
+# stack needs. Plan: Projects/LLM Runners/Plans/murderbot-gpu-worker-llmkube.md
+# (Obsidian). Later phases extend this role (k3s join, containerd runtime).
+
+# Exact apt version of the NVIDIA CUDA repo driver packages. All nvidia-driver
+# packages move together; the apt preference below keeps unattended upgrades
+# from moving them.
+gpu_worker_nvidia_driver_version: "610.57.04-1"
+
+gpu_worker_apt_pin_file: /etc/apt/preferences.d/nvidia-driver-pin
