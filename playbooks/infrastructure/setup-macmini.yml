@@ -23,7 +23,7 @@
 #   mini-ollama     — Install native Ollama, LaunchDaemon, enforce desired model list, log rotation
 #   mini-tailscale  — Tailscale VPN setup
 #   mini-bluebubbles — Install BlueBubbles iMessage proxy
-#   mini-dns        — pf DNS redirect + dns-udp-proxy.py for Technitium (no BWS token needed)
+#   mini-dns        — retire the 10.100.20.240 DNS alias/proxy LaunchDaemons on the Mini (DNS moved to k3s)
 #   mini-summary    — Show setup summary
 #
 # DNS proxy only (pulls komodo-dean-gitops on the Mini, reinstalls LaunchDaemons, restarts):
@@ -241,7 +241,7 @@
       stat:
         path: "{{ compose_dir }}/.git"
       register: compose_repo_check
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     - name: Clone komodo-dean-gitops repo
       git:
@@ -250,7 +250,7 @@
         version: main
       become: no
       when: not compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     # Align existing checkout to origin/main. Unexpected dirty files fail; paths in
     # macmini_gitops_allowlisted_dirty_paths are stashed around checkout/pull then restored.
@@ -261,7 +261,7 @@
       become: no
       changed_when: false
       when: compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     # Allowlist is written with `copy` (controller-side Jinja). Passing multiline values in
     # `environment` is unreliable: Ansible/SSH serialization often drops newlines, leaving an
@@ -275,7 +275,7 @@
             else macmini_gitops_allowlisted_dirty_paths
           }}
       when: compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     - name: Require non-empty resolved GitOps dirty-path allowlist
       assert:
@@ -284,7 +284,7 @@
         fail_msg: >-
           macmini_gitops_allowlist_for_sync is empty after resolving group_vars and playbook defaults.
       when: compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     - name: Stage GitOps dirty-path allowlist for main sync
       copy:
@@ -292,7 +292,7 @@
         content: "{{ macmini_gitops_allowlist_for_sync | join('\n') }}\n"
         mode: "0600"
       when: compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     - name: Checkout main and fast-forward to origin/main (komodo-dean-gitops)
       environment:
@@ -350,7 +350,7 @@
       become: no
       register: komodo_gitops_sync
       when: compose_repo_check.stat.exists
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
       changed_when: >-
         komodo_gitops_sync.rc == 0 and
         ( 'Already up to date' not in (komodo_gitops_sync.stdout | default(''))
@@ -363,7 +363,7 @@
         mode: "0644"
       become: no
       when: (ansible_facts.get('memtotal_mb', 0) | int) > 0
-      tags: [mini-komodo, mini-secrets, mini-dns, macmini]
+      tags: [mini-komodo, mini-secrets, macmini]
 
     # ─── Bitwarden Secrets ───────────────────────────────────────────────
     # All secret injection is handled by scripts/inject-secrets.sh in the
@@ -1104,108 +1104,44 @@
           Android: Install BlueBubbles from Google Play, connect to {{ macmini_ip }}:1234
       tags: [mini-bluebubbles]
 
-    # ─── DNS / pf redirect + Python DNS proxy ─────────────────────────────
-    # pf-dns-redirect.sh: pf rdr sends DNS (UDP+TCP) for 10.100.20.240:53 →
-    # 10.100.20.240:15354. dns-udp-proxy.py forwards to OrbStack VM
-    # (192.168.139.2:5354) where Technitium listens (host network).
-    # LaunchDaemons install from the Mini's git checkout (remote_src: yes);
-    # git pull runs under mini-komodo / mini-secrets / mini-dns tags first.
+    # ─── DNS endpoint 10.100.20.240 — RETIRED on the Mini ──────────────────
+    # 10.100.20.240 is now served by the k3s Technitium cluster (Cilium LB IP,
+    # dean-tofu k3s/infra/prod/technitium). The Mini must not hold the alias or
+    # answer on it. These tasks enforce that: the four DNS LaunchDaemons are
+    # unloaded and removed, and the en0 alias is dropped.
 
-    - name: Require dns-udp-proxy script in GitOps checkout
-      stat:
-        path: "{{ macmini_compose_dir }}/scripts/dns-udp-proxy.py"
-      register: dns_udp_proxy_script
-      tags: [mini-dns, macmini]
-
-    - name: Fail if dns-udp-proxy.py is missing on the Mini
-      fail:
-        msg: |
-          Expected {{ macmini_compose_dir }}/scripts/dns-udp-proxy.py after git clone/pull.
-          On the Mini: ensure {{ compose_dir }} exists and `git pull` succeeds, then re-run
-          with --tags mini-dns (or full setup-macmini).
-      when: not dns_udp_proxy_script.stat.exists
-      tags: [mini-dns, macmini]
-
-    - name: Enable IP forwarding persistently via /etc/sysctl.conf
-      lineinfile:
-        path: /etc/sysctl.conf
-        line: "net.inet.ip.forwarding=1"
-        create: yes
-        owner: root
-        group: wheel
-        mode: '0644'
-      become: yes
-      tags: [mini-dns, macmini]
-
-    - name: Enable IP forwarding immediately (runtime)
-      command: sysctl -w net.inet.ip.forwarding=1
-      become: yes
-      changed_when: false
-      tags: [mini-dns, macmini]
-
-    - name: Install pf-dns-redirect LaunchDaemon
-      copy:
-        src: "{{ macmini_compose_dir }}/launchd/com.local.pf-dns-redirect.plist"
-        dest: /Library/LaunchDaemons/com.local.pf-dns-redirect.plist
-        owner: root
-        group: wheel
-        mode: '0644'
-        remote_src: yes
-      become: yes
-      tags: [mini-dns, macmini]
-
-    - name: Install dns-udp-proxy LaunchDaemon
-      copy:
-        src: "{{ macmini_compose_dir }}/launchd/com.local.dns-udp-proxy.plist"
-        dest: /Library/LaunchDaemons/com.local.dns-udp-proxy.plist
-        owner: root
-        group: wheel
-        mode: '0644'
-        remote_src: yes
-      become: yes
-      tags: [mini-dns, macmini]
-
-    - name: Restart pf-dns-redirect LaunchDaemon
+    - name: Unload retired DNS LaunchDaemons
       shell: |
-        launchctl bootout system /Library/LaunchDaemons/com.local.pf-dns-redirect.plist 2>/dev/null || \
-          launchctl unload /Library/LaunchDaemons/com.local.pf-dns-redirect.plist 2>/dev/null || true
-        launchctl bootstrap system /Library/LaunchDaemons/com.local.pf-dns-redirect.plist 2>/dev/null || \
-          launchctl load /Library/LaunchDaemons/com.local.pf-dns-redirect.plist
+        launchctl bootout system /Library/LaunchDaemons/{{ item }}.plist 2>/dev/null || \
+          launchctl unload /Library/LaunchDaemons/{{ item }}.plist 2>/dev/null || true
+      loop: &retired_dns_daemons
+        - com.local.dns-alias-watchdog
+        - com.local.dns-keepalive
+        - com.local.dns-udp-proxy
+        - com.local.pf-dns-redirect
+        - com.local.socat-dns-proxy
       become: yes
       changed_when: false
       tags: [mini-dns, macmini]
 
-    - name: Restart dns-udp-proxy LaunchDaemon
-      shell: |
-        launchctl bootout system /Library/LaunchDaemons/com.local.socat-dns-proxy.plist 2>/dev/null || \
-          launchctl unload /Library/LaunchDaemons/com.local.socat-dns-proxy.plist 2>/dev/null || true
-        launchctl bootout system /Library/LaunchDaemons/com.local.dns-udp-proxy.plist 2>/dev/null || \
-          launchctl unload /Library/LaunchDaemons/com.local.dns-udp-proxy.plist 2>/dev/null || true
-        launchctl bootstrap system /Library/LaunchDaemons/com.local.dns-udp-proxy.plist 2>/dev/null || \
-          launchctl load /Library/LaunchDaemons/com.local.dns-udp-proxy.plist
-      become: yes
-      changed_when: false
-      tags: [mini-dns, macmini]
-
-    - name: Install dns-keepalive LaunchDaemon
-      copy:
-        src: "{{ macmini_compose_dir }}/launchd/com.local.dns-keepalive.plist"
-        dest: /Library/LaunchDaemons/com.local.dns-keepalive.plist
-        owner: root
-        group: wheel
-        mode: '0644'
-        remote_src: yes
+    - name: Remove retired DNS LaunchDaemon plists
+      file:
+        path: "/Library/LaunchDaemons/{{ item }}.plist"
+        state: absent
+      loop: *retired_dns_daemons
       become: yes
       tags: [mini-dns, macmini]
 
-    - name: Restart dns-keepalive LaunchDaemon
-      shell: |
-        launchctl bootout system /Library/LaunchDaemons/com.local.dns-keepalive.plist 2>/dev/null || \
-          launchctl unload /Library/LaunchDaemons/com.local.dns-keepalive.plist 2>/dev/null || true
-        launchctl bootstrap system /Library/LaunchDaemons/com.local.dns-keepalive.plist 2>/dev/null || \
-          launchctl load /Library/LaunchDaemons/com.local.dns-keepalive.plist
-      become: yes
+    - name: Check whether the 10.100.20.240 alias is still on en0
+      shell: ifconfig en0 | grep -c 'inet 10.100.20.240 ' || true
+      register: dns_alias_present
       changed_when: false
+      tags: [mini-dns, macmini]
+
+    - name: Drop the 10.100.20.240 alias from en0
+      command: ifconfig en0 -alias 10.100.20.240
+      become: yes
+      when: dns_alias_present.stdout | trim != '0'
       tags: [mini-dns, macmini]
 
     # ─── Summary ───────────────────────────────────────────────────────────
