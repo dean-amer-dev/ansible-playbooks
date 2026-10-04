@@ -147,6 +147,33 @@
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ cachyos_user_uid }}/bus"
   tags: [joystick-notify, service, tray]
 
+# ── Cursor idle-park (ydotool) ────────────────────────────────────────────────
+# Steam's own overlay/pause-menu cursor reappears wherever the real system
+# pointer currently sits -- by default that's dead center of the screen
+# (confirmed live 2026-09-28: a 90s capture across every mouse-capable input
+# device on the box logged zero events across two overlay-opens, ruling out
+# any real "mouse move" trigger -- the overlay just shows its own cursor
+# unconditionally on menu/pause focus). cursor.idle_park_enabled (off by
+# default, wizard-exposed) warps the real pointer into a corner after a
+# period of no controller activity so the overlay's cursor shows up out of
+# the way instead -- see cursor_idle_park.py's module docstring in the app
+# repo. `ydotool` is the only way to move the real pointer under Wayland
+# without an X11-only tool like xdotool; `ydotool` itself is already in
+# cachyos_pacman_packages (harmless to install even where the feature is
+# left off in config.toml), this just also needs its daemon running.
+
+- name: Enable ydotoold (cursor idle-park pointer warps)
+  ansible.builtin.systemd:
+    name: ydotool.service
+    enabled: true
+    state: started
+    scope: user
+  become: false
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ cachyos_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ cachyos_user_uid }}/bus"
+  tags: [joystick-notify, service, cursor-idle-park]
+
 # ── CEC (pulse8-cec-attach) ──────────────────────────────────────────────────
 # pulse8-cec-attach@.service ships with the package (system scope) and is
 # started directly by udev via SYSTEMD_WANTS — it has no [Install] section,
