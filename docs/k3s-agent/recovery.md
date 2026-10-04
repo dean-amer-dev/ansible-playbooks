@@ -1,5 +1,7 @@
 # k3s-agent — recovery
 
+> **murderbot is no longer managed by this role** (2026-10-04): it joined the Infrastructure 2.0 cluster via the `gpu-worker` role (`playbooks/infrastructure/setup-gpu-worker.yml`); `murderbot-k3s-agent.yml` and `host_vars/murderbot.yml` were removed. References to them below are historical.
+
 ## Node stuck `NotReady`, containerd boot is slow (meta.db bloat)
 
 Root cause of the 2026-09-08 murderbot `NotReady` incident: containerd generates a message that

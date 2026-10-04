@@ -10,3 +10,18 @@
 gpu_worker_nvidia_driver_version: "610.57.04-1"
 
 gpu_worker_apt_pin_file: /etc/apt/preferences.d/nvidia-driver-pin
+
+# --- k3s agent (Phase 2: murderbot joins the Infrastructure 2.0 cluster as a tainted GPU worker) ---
+gpu_worker_k3s_version: "v1.36.4+k3s1"      # must match the servers (roles/debian-k3s debian_k3s_version)
+gpu_worker_k3s_server: "https://10.100.20.161:6443"   # kube-vip API VIP
+gpu_worker_k3s_node_ip: "{{ ansible_host }}"
+gpu_worker_k3s_data_dir: /mnt/storage/k3s-agent
+# containerd's meta.db lives on the SSD (root fs), not the RAID5 array holding data-dir
+gpu_worker_containerd_meta_ssd_dir: /var/lib/containerd-meta-ssd
+gpu_worker_node_labels:
+  - "gpu-worker=true"
+gpu_worker_node_taints:
+  - "gpu-worker=true:NoSchedule"
+
+# Cilium (devices: lan0) and kube-vip key off the NIC being named lan0.
+gpu_worker_lan_nic_name: lan0

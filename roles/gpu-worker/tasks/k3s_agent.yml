@@ -1,0 +1,191 @@
+---
+# murderbot as a tainted GPU worker in the Infrastructure 2.0 cluster.
+# Never reboots. Sequencing: the agent only starts once the NIC is named lan0 (Cilium devices: lan0)
+# and the legacy agent state (old cluster CA, certs, kubeconfigs) has been moved aside.
+# The join token is read from the init server by the playbook's first play (never printed, never in git).
+
+- name: Require the join token fact (set by the first play; do not run with --limit murderbot)
+  ansible.builtin.assert:
+    that: gpu_worker_k3s_join_token is defined and gpu_worker_k3s_join_token | length > 0
+    fail_msg: "gpu_worker_k3s_join_token missing: run the whole playbook, not --limit murderbot"
+  no_log: true
+
+- name: Read installed k3s version
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: gpu_worker_k3s_installed
+  changed_when: false
+  failed_when: false
+
+- name: Fetch k3s installer
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/share/k3s-install.sh
+    mode: "0755"
+  when: gpu_worker_k3s_version not in gpu_worker_k3s_installed.stdout
+
+- name: Install pinned k3s (agent, not started)
+  ansible.builtin.command: /usr/local/share/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ gpu_worker_k3s_version }}"
+    INSTALL_K3S_EXEC: agent
+    INSTALL_K3S_SKIP_START: "true"
+  when: gpu_worker_k3s_version not in gpu_worker_k3s_installed.stdout
+
+# --- is there legacy (old-cluster) agent state to retire? ---
+- name: Read the join marker in the data dir
+  ansible.builtin.slurp:
+    src: "{{ gpu_worker_k3s_data_dir }}/.joined-server"
+  register: gpu_worker_join_marker
+  failed_when: false
+
+- name: Does the data dir exist?
+  ansible.builtin.stat:
+    path: "{{ gpu_worker_k3s_data_dir }}"
+  register: gpu_worker_data_dir_stat
+
+- name: Decide whether the data dir belongs to another cluster
+  ansible.builtin.set_fact:
+    gpu_worker_legacy_state: >-
+      {{ gpu_worker_data_dir_stat.stat.exists and
+         (gpu_worker_join_marker.content | default('') | b64decode | trim) != gpu_worker_k3s_server }}
+
+- name: Retire legacy agent state (stop and disable the agent so a reboot cannot start it on stale certs)
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: stopped
+    enabled: false
+  when: gpu_worker_legacy_state | bool
+
+- name: Are there mounts left under the legacy data dir (pods of the dead cluster)?
+  ansible.builtin.shell: "findmnt -rn -o TARGET | grep -c '^{{ gpu_worker_k3s_data_dir }}/' || true"
+  register: gpu_worker_legacy_mounts
+  changed_when: false
+  when: gpu_worker_legacy_state | bool
+
+- name: Move the legacy data dir and SSD meta.db dir aside (kept, never deleted)
+  when:
+    - gpu_worker_legacy_state | bool
+    - (gpu_worker_legacy_mounts.stdout | default('1') | trim) == '0'
+  block:
+    - name: Move data dir aside
+      ansible.builtin.command: "mv {{ gpu_worker_k3s_data_dir }} {{ gpu_worker_k3s_data_dir }}.legacy-{{ ansible_date_time.date }}"
+      args:
+        creates: "{{ gpu_worker_k3s_data_dir }}.legacy-{{ ansible_date_time.date }}"
+
+    - name: Does the SSD meta dir exist?
+      ansible.builtin.stat:
+        path: "{{ gpu_worker_containerd_meta_ssd_dir }}"
+      register: gpu_worker_meta_stat
+
+    - name: Move SSD meta dir aside
+      ansible.builtin.command: "mv {{ gpu_worker_containerd_meta_ssd_dir }} {{ gpu_worker_containerd_meta_ssd_dir }}.legacy-{{ ansible_date_time.date }}"
+      args:
+        creates: "{{ gpu_worker_containerd_meta_ssd_dir }}.legacy-{{ ansible_date_time.date }}"
+      when: gpu_worker_meta_stat.stat.exists
+
+- name: Report pending legacy retirement
+  ansible.builtin.debug:
+    msg: >-
+      Legacy agent state still has active mounts under {{ gpu_worker_k3s_data_dir }} (dead-cluster pods).
+      Alex reboots, then re-run this playbook to finish retiring it and start the agent.
+  when:
+    - gpu_worker_legacy_state | bool
+    - (gpu_worker_legacy_mounts.stdout | default('1') | trim) != '0'
+
+- name: Re-check for legacy state (it may just have been moved aside)
+  ansible.builtin.stat:
+    path: "{{ gpu_worker_k3s_data_dir }}"
+  register: gpu_worker_data_dir_after
+
+- name: Legacy state is still pending only if the dir is still there without our marker
+  ansible.builtin.set_fact:
+    gpu_worker_legacy_pending: >-
+      {{ gpu_worker_data_dir_after.stat.exists and
+         (gpu_worker_join_marker.content | default('') | b64decode | trim) != gpu_worker_k3s_server }}
+
+# --- desired state ---
+- name: Ensure /etc/rancher/k3s exists
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write k3s agent config.yaml
+  ansible.builtin.template:
+    src: k3s-agent-config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: gpu_worker_k3s_config
+
+# The installer-created env file carried K3S_URL/K3S_TOKEN of the old cluster and env beats config.yaml.
+- name: Neutralise k3s-agent.service.env (config.yaml is the only source of server/token)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/k3s-agent.service.env
+    content: "# Managed by Ansible (role gpu-worker). Server and token live in /etc/rancher/k3s/config.yaml.\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true  # --diff would print the previous file, which holds a join token
+
+- name: Create fresh data dir and containerd meta.db SSD split
+  when: not (gpu_worker_legacy_pending | bool)
+  block:
+    - name: Data dir and containerd dirs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ gpu_worker_k3s_data_dir }}", mode: "0755" }
+        - { path: "{{ gpu_worker_k3s_data_dir }}/agent/containerd/io.containerd.metadata.v1.bolt", mode: "0711" }
+        - { path: "{{ gpu_worker_containerd_meta_ssd_dir }}/io.containerd.metadata.v1.bolt", mode: "0700" }
+
+    - name: Symlink containerd meta.db to the SSD
+      ansible.builtin.file:
+        src: "{{ gpu_worker_containerd_meta_ssd_dir }}/io.containerd.metadata.v1.bolt/meta.db"
+        dest: "{{ gpu_worker_k3s_data_dir }}/agent/containerd/io.containerd.metadata.v1.bolt/meta.db"
+        state: link
+        force: true
+
+    - name: Record which cluster this data dir belongs to
+      ansible.builtin.copy:
+        dest: "{{ gpu_worker_k3s_data_dir }}/.joined-server"
+        content: "{{ gpu_worker_k3s_server }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: Gather current interfaces
+  ansible.builtin.setup:
+    gather_subset: [network]
+
+- name: Enable and start the agent only when it is safe (NIC named lan0, legacy state retired)
+  ansible.builtin.systemd:
+    name: k3s-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - gpu_worker_lan_nic_name in ansible_facts.interfaces
+    - not (gpu_worker_legacy_pending | bool)
+
+- name: Restart the agent if its config changed
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: restarted
+  when:
+    - gpu_worker_k3s_config is changed
+    - gpu_worker_lan_nic_name in ansible_facts.interfaces
+    - not (gpu_worker_legacy_pending | bool)
+
+- name: Report agent not started
+  ansible.builtin.debug:
+    msg: "k3s-agent NOT started: NIC is not yet named {{ gpu_worker_lan_nic_name }} and/or legacy state is pending. Alex reboots, then re-run."
+  when: (gpu_worker_lan_nic_name not in ansible_facts.interfaces) or (gpu_worker_legacy_pending | bool)

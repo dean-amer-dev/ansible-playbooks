@@ -37,6 +37,7 @@
   ansible.builtin.command: dkms status nvidia
   register: gpu_worker_dkms
   changed_when: false
+  check_mode: false  # read-only; the assert below needs real output in --check
 
 - name: Fail unless DKMS built the pinned module for the running kernel
   ansible.builtin.assert:

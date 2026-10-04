@@ -1,10 +1,31 @@
 ---
-# Bring murderbot to the NVIDIA driver level the LLM runner stack needs.
-# Never reboots: if the loaded module is stale the play says so and Alex reboots.
+# Bring murderbot to the NVIDIA driver level the LLM runner stack needs and join it to the
+# Infrastructure 2.0 cluster as a tainted GPU worker.
+# Never reboots: if the loaded module or NIC name is stale the play says so and Alex reboots.
 #
 # Usage:
 #   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-gpu-worker.yml --check --diff
 #   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-gpu-worker.yml
+
+# Run the whole playbook (no --limit): the first play reads the cluster join token from the
+# init server and hands it to murderbot as a fact. The token is never printed or stored in git.
+- name: Read the cluster join token from the init server
+  hosts: debian_k3s[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/token
+      register: gpu_worker_init_token
+      no_log: true
+
+    - name: Hand the token to murderbot
+      ansible.builtin.set_fact:
+        gpu_worker_k3s_join_token: "{{ gpu_worker_init_token.content | b64decode | trim }}"
+      delegate_to: murderbot
+      delegate_facts: true
+      no_log: true
 
 - name: Set up murderbot as a GPU worker
   hosts: murderbot

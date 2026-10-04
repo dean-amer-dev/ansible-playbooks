@@ -1,5 +1,7 @@
 # k3s-agent — running
 
+> **murderbot is no longer managed by this role** (2026-10-04): it joined the Infrastructure 2.0 cluster via the `gpu-worker` role (`playbooks/infrastructure/setup-gpu-worker.yml`); `murderbot-k3s-agent.yml` and `host_vars/murderbot.yml` were removed. References to them below are historical.
+
 Installs the k3s binary via the official installer script (agent-only mode), writes
 `/etc/rancher/k3s/config.yaml`, and enables the `k3s-agent` service — joining an existing k3s
 cluster (the legacy `[k3s]` group / Pi HA controllers, **not** the `debian_k3s` Infrastructure 2.0
