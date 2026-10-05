@@ -7,6 +7,9 @@
 - name: Name the LAN NIC lan0
   ansible.builtin.include_tasks: new_cluster_network.yml
 
+- name: Host sysctls Cilium needs (src_valid_mark)
+  ansible.builtin.include_tasks: new_cluster_cilium_host.yml
+
 - name: Require the join token fact (set by the first play; do not run with --limit this host)
   ansible.builtin.assert:
     that: k3s_agent_nc_join_token is defined and k3s_agent_nc_join_token | length > 0
