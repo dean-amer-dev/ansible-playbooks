@@ -1,0 +1,35 @@
+---
+# Join archlinux to the Infrastructure 2.0 cluster as a plain worker (role k3s-agent, new-cluster mode).
+# Never reboots: the NIC becomes lan0 at the next boot (Alex reboots), then re-run to start the agent.
+# Run the whole playbook (no --limit): the first play hands the join token over as a fact.
+#
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-archlinux-k3s-join.yml --diff
+
+- name: Read the cluster join token from the init server
+  hosts: debian_k3s[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/token
+      register: k3s_join_init_token
+      no_log: true
+
+    - name: Hand the token to archlinux
+      ansible.builtin.set_fact:
+        k3s_agent_nc_join_token: "{{ k3s_join_init_token.content | b64decode | trim }}"
+      delegate_to: archlinux
+      delegate_facts: true
+      no_log: true
+
+- name: Firewall prerequisites for Cilium native routing on archlinux
+  ansible.builtin.import_playbook: setup-archlinux-k3s.yml
+
+- name: Join archlinux to the new cluster
+  hosts: archlinux
+  become: true
+  gather_facts: true
+  roles:
+    - role: ../../roles/k3s-agent
+      tags: [k3s-agent]
