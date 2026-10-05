@@ -14,3 +14,7 @@
 - name: Provision the model directory
   ansible.builtin.import_tasks: model_dir.yml
   tags: [gpu-worker, gpu-worker-model-dir]
+
+- name: Host sysctls Cilium needs
+  ansible.builtin.import_tasks: cilium_host.yml
+  tags: [gpu-worker, gpu-worker-cilium-host]
