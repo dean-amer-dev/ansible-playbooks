@@ -10,7 +10,7 @@
 # The ONLY secret input is BWS_ACCESS_TOKEN in the environment (never on the command line):
 #   export BWS_ACCESS_TOKEN="$(cat /home/alex/claude/bws-ro-token)"
 #   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-debian-k3s.yml --limit gmktec-1
-# Add --check --diff for a dry run. Tags: ssh_keys packages headless power storage longhorn network k3s argocd
+# Add --check --diff for a dry run. Tags: ssh_keys packages kdump headless power storage longhorn network k3s argocd
 # BWS is read on the control node only; the token is never sent to the hosts.
 #
 # First run on a fresh box: if alex's key is not installed yet, the run prompts ONCE for alex's

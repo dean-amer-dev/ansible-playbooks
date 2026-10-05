@@ -33,6 +33,14 @@ debian_k3s_keep_packages:
   - ifupdown
   - wpasupplicant
 
+# --- kdump ---
+debian_k3s_kdump_packages:
+  - kdump-tools
+  - kexec-tools
+  - makedumpfile
+debian_k3s_kdump_num_dumps: 3
+debian_k3s_kdump_sysrq: 446   # Debian default 438 + 8 (allows the 'c' crash trigger)
+
 # --- headless: anything matching these (dpkg globs) is purged if installed ---
 debian_k3s_gui_packages:
   - "task-*-desktop"
