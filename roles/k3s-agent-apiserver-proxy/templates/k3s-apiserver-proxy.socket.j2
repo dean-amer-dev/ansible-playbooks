@@ -1,0 +1,9 @@
+# Managed by Ansible (role k3s-agent-apiserver-proxy) -- do not edit by hand.
+[Unit]
+Description=Local listener for the k3s API server on worker nodes
+
+[Socket]
+ListenStream={{ k3s_apiserver_proxy_listen }}
+
+[Install]
+WantedBy=sockets.target

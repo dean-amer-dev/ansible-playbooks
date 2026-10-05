@@ -1,0 +1,18 @@
+# Managed by Ansible (role gpu-worker) -- do not edit by hand.
+server: "{{ gpu_worker_k3s_server }}"
+token: "{{ gpu_worker_k3s_join_token }}"
+
+node-name: "{{ inventory_hostname }}"
+node-ip: "{{ gpu_worker_k3s_node_ip }}"
+
+data-dir: "{{ gpu_worker_k3s_data_dir }}"
+log: "/var/log/k3s-agent.log"
+
+node-label:
+{% for label in gpu_worker_node_labels %}
+  - "{{ label }}"
+{% endfor %}
+node-taint:
+{% for taint in gpu_worker_node_taints %}
+  - "{{ taint }}"
+{% endfor %}

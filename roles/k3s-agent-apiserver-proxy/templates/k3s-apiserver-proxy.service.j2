@@ -1,0 +1,10 @@
+# Managed by Ansible (role k3s-agent-apiserver-proxy) -- do not edit by hand.
+[Unit]
+Description=Forward local k3s API server port to the API VIP
+Requires=k3s-apiserver-proxy.socket
+After=k3s-apiserver-proxy.socket network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd {{ k3s_apiserver_proxy_upstream }}
+PrivateTmp=true

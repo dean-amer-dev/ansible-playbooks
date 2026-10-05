@@ -2,3 +2,11 @@
 - name: Install NVIDIA driver at the pinned version
   ansible.builtin.import_tasks: driver.yml
   tags: [gpu-worker, gpu-worker-driver]
+
+- name: Name the LAN NIC lan0
+  ansible.builtin.import_tasks: network.yml
+  tags: [gpu-worker, gpu-worker-network]
+
+- name: Join the cluster as a tainted GPU worker
+  ansible.builtin.import_tasks: k3s_agent.yml
+  tags: [gpu-worker, gpu-worker-k3s]

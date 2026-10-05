@@ -35,7 +35,7 @@ below by where they're used, matching the playbooks in `playbooks/infrastructure
 
 | Role | Purpose |
 |------|---------|
-| [k3s-agent](k3s-agent/running.md) | Installs k3s agent and joins the legacy `[k3s]` cluster — used by `setup-cachyos.yml` (archlinux), `archlinux-k3s-agent.yml`, and `murderbot-k3s-agent.yml`. ([recovery](k3s-agent/recovery.md)) |
+| [k3s-agent](k3s-agent/running.md) | Installs k3s agent and joins the legacy `[k3s]` cluster — used by `setup-cachyos.yml` (archlinux) and `archlinux-k3s-agent.yml`. (murderbot now joins the new cluster via the `gpu-worker` role, `setup-gpu-worker.yml`.) ([recovery](k3s-agent/recovery.md)) |
 
 ## Recovery/runbook playbooks (not tied to a single role)
 
