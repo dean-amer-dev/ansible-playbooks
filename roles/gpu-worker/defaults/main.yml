@@ -25,3 +25,10 @@ gpu_worker_node_taints:
 
 # Cilium (devices: lan0) and kube-vip key off the NIC being named lan0.
 gpu_worker_lan_nic_name: lan0
+
+# Model directory served to llmkube pods (hostPath under /mnt/storage). Distinct
+# from the older /mnt/storage/models/llms tree.
+gpu_worker_model_dir: /mnt/storage/models/llmkube
+gpu_worker_model_dir_owner: alex
+gpu_worker_model_dir_group: alex
+gpu_worker_model_dir_mode: "0775"
