@@ -1,0 +1,29 @@
+---
+# Worker nodes have no apiserver on 127.0.0.1:6443, but Cilium (hostNetwork) is configured with
+# KUBERNETES_SERVICE_HOST=127.0.0.1:6443 cluster-wide, which only works on control-plane nodes.
+# Every non-control-plane node needs this forwarder to the API VIP, otherwise Cilium never
+# initialises and the node stays NotReady.
+- name: Install k3s-apiserver-proxy socket unit
+  ansible.builtin.template:
+    src: k3s-apiserver-proxy.socket.j2
+    dest: /etc/systemd/system/k3s-apiserver-proxy.socket
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart k3s-apiserver-proxy socket
+
+- name: Install k3s-apiserver-proxy service unit
+  ansible.builtin.template:
+    src: k3s-apiserver-proxy.service.j2
+    dest: /etc/systemd/system/k3s-apiserver-proxy.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart k3s-apiserver-proxy socket
+
+- name: Enable and start the socket
+  ansible.builtin.systemd:
+    name: k3s-apiserver-proxy.socket
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,4 @@
+---
+# Upstream the local proxy forwards 127.0.0.1:6443 to: the API VIP (kube-vip).
+k3s_apiserver_proxy_upstream: "10.100.20.161:6443"
+k3s_apiserver_proxy_listen: "127.0.0.1:6443"

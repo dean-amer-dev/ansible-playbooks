@@ -1,0 +1,6 @@
+---
+- name: Restart k3s-apiserver-proxy socket
+  ansible.builtin.systemd:
+    name: k3s-apiserver-proxy.socket
+    state: restarted
+    daemon_reload: true

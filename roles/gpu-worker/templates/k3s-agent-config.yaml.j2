@@ -8,9 +8,6 @@ node-ip: "{{ gpu_worker_k3s_node_ip }}"
 data-dir: "{{ gpu_worker_k3s_data_dir }}"
 log: "/var/log/k3s-agent.log"
 
-# Cilium replaces kube-proxy cluster-wide; the agent would otherwise start its own.
-disable-kube-proxy: true
-
 node-label:
 {% for label in gpu_worker_node_labels %}
   - "{{ label }}"

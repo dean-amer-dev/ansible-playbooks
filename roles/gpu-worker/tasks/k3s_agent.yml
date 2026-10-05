@@ -162,6 +162,12 @@
         group: root
         mode: "0644"
 
+- name: Forward 127.0.0.1:6443 to the API VIP (Cilium on a worker expects a local apiserver)
+  ansible.builtin.include_role:
+    name: ../../roles/k3s-agent-apiserver-proxy
+  vars:
+    k3s_apiserver_proxy_upstream: "{{ gpu_worker_k3s_server | regex_replace('^https?://', '') }}"
+
 - name: Gather current interfaces
   ansible.builtin.setup:
     gather_subset: [network]
