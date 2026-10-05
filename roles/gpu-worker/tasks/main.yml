@@ -10,3 +10,7 @@
 - name: Join the cluster as a tainted GPU worker
   ansible.builtin.import_tasks: k3s_agent.yml
   tags: [gpu-worker, gpu-worker-k3s]
+
+- name: Provision the model directory
+  ansible.builtin.import_tasks: model_dir.yml
+  tags: [gpu-worker, gpu-worker-model-dir]

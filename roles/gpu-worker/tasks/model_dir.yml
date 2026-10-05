@@ -1,0 +1,8 @@
+---
+- name: Ensure the model directory exists with the right owner and mode
+  ansible.builtin.file:
+    path: "{{ gpu_worker_model_dir }}"
+    state: directory
+    owner: "{{ gpu_worker_model_dir_owner }}"
+    group: "{{ gpu_worker_model_dir_group }}"
+    mode: "{{ gpu_worker_model_dir_mode }}"
