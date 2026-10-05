@@ -27,6 +27,10 @@
   ansible.builtin.import_tasks: packages.yml
   tags: [packages]
 
+- name: Kernel crash dumps (kdump); never reboots, reports a pending reboot
+  ansible.builtin.import_tasks: kdump.yml
+  tags: [kdump]
+
 - name: Headless (remove GUI) and disable auto-sleep
   ansible.builtin.import_tasks: headless.yml
   tags: [headless]

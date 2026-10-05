@@ -1,0 +1,85 @@
+---
+# Kernel crash dumps (kdump): a kernel panic or lockup leaves a vmcore in /var/crash to analyse.
+# Nothing here reboots the box. crashkernel= is only reserved at boot, so the last task reports a
+# pending reboot; reboot one node at a time yourself (see docs/debian-k3s/kdump.md).
+
+- name: Preseed kdump-tools debconf (enabled) and kexec-tools (no grub kexec handling)
+  ansible.builtin.debconf:
+    name: "{{ item.name }}"
+    question: "{{ item.question }}"
+    vtype: boolean
+    value: "{{ item.value }}"
+  loop:
+    - { name: kdump-tools, question: kdump-tools/use_kdump, value: "true" }
+    - { name: kexec-tools, question: kexec-tools/use_grub_config, value: "false" }
+
+# The kdump-tools postinst runs update-grub, which adds crashkernel=512M-:192M from
+# /etc/default/grub.d/kdump-tools.cfg.
+- name: Install kdump packages
+  ansible.builtin.apt:
+    name: "{{ debian_k3s_kdump_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Keep only the newest vmcores (a dump is ~1-3 GiB on /var)
+  ansible.builtin.lineinfile:
+    path: /etc/default/kdump-tools
+    regexp: '^#?KDUMP_NUM_DUMPS='
+    line: "KDUMP_NUM_DUMPS={{ debian_k3s_kdump_num_dumps }}"
+
+- name: Does grub.cfg carry the crashkernel reservation?
+  ansible.builtin.command: grep -q 'crashkernel=' /boot/grub/grub.cfg
+  register: debian_k3s_kdump_grub_check
+  changed_when: false
+  failed_when: false
+
+- name: Regenerate grub.cfg when the reservation is missing
+  ansible.builtin.command: update-grub
+  when: debian_k3s_kdump_grub_check.rc != 0
+  changed_when: true
+
+# kernel.hung_task_panic is deliberately NOT set: hung tasks here are mostly NFS waits (tdarr on
+# murderbot's NFS), and panicking on those would reboot every NFS client whenever the server stalls.
+# sysrq: Debian's default 438 plus 8 (debugging dumps) so Alt+SysRq+c / `echo c > /proc/sysrq-trigger`
+# can force a dump of a wedged-but-alive kernel; it does not enable reboot/kill/sync.
+- name: Panic (and so dump) on lockups and NMIs, allow a manual crash trigger
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/91-kdump.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { name: kernel.softlockup_panic, value: "1" }
+    - { name: kernel.hardlockup_panic, value: "1" }
+    - { name: kernel.unknown_nmi_panic, value: "1" }
+    - { name: kernel.panic_on_unrecovered_nmi, value: "1" }
+    - { name: kernel.panic_on_io_nmi, value: "1" }
+    - { name: kernel.sysrq, value: "{{ debian_k3s_kdump_sysrq }}" }
+
+# Enabled, not started: starting it loads the crash kernel, which fails until crashkernel= is
+# reserved by a reboot. At boot it loads the crash kernel by itself.
+- name: Enable kdump-tools at boot
+  ansible.builtin.systemd:
+    name: kdump-tools
+    enabled: true
+
+- name: How much memory does the running kernel have reserved for the crash kernel?
+  ansible.builtin.command: cat /sys/kernel/kexec_crash_size
+  register: debian_k3s_kdump_reserved
+  changed_when: false
+
+- name: Reboot needed before kdump is armed
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: crash kernel NOT reserved yet, kdump is not armed.
+      This role never reboots; reboot this node yourself (one node at a time, wait for
+      etcd/Postgres/CouchDB to be healthy before the next), then check `sudo kdump-config status`.
+  when: debian_k3s_kdump_reserved.stdout | int == 0
+
+- name: kdump armed
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ (debian_k3s_kdump_reserved.stdout | int / 1048576) | int }} MiB reserved for the crash kernel"
+  when: debian_k3s_kdump_reserved.stdout | int > 0
