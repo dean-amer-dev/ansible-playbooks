@@ -3,6 +3,15 @@
 # Installs k3s binary via official script, writes config.yaml, enables agent service.
 # k3s_token must be set as a hostvars fact (fetched from BWS by the fetch-secrets play).
 
+- name: Join the Infrastructure 2.0 cluster (new-cluster mode; replaces the legacy flow below)
+  ansible.builtin.include_tasks: new_cluster.yml
+  when: k3s_agent_new_cluster | bool
+  tags: [k3s-agent]
+
+- name: End the role here in new-cluster mode
+  ansible.builtin.meta: end_role
+  when: k3s_agent_new_cluster | bool
+
 - name: Check if k3s binary is already installed
   ansible.builtin.stat:
     path: /usr/local/bin/k3s

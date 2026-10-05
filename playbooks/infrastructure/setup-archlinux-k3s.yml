@@ -74,3 +74,30 @@
         comment: "MetalLB memberlist (speaker gossip)"
       when: inventory_hostname == 'archlinux'
       tags: [archlinux, k3s, ufw]
+
+    # Infrastructure 2.0 uses Cilium native routing (no VXLAN): peers reach archlinux pods by routing
+    # pod-CIDR traffic (10.44.0.0/16) through the LAN, and Cilium health/envoy use node-to-node ports.
+    # ufw's default deny (incoming and routed) would drop that. Scoped to cluster sources only.
+    - name: Allow cluster LAN and pod CIDR inbound (Cilium native routing, health, kubelet)
+      community.general.ufw:
+        rule: allow
+        src: "{{ item.src }}"
+        comment: "{{ item.comment }}"
+      loop:
+        - { src: "10.100.20.0/24", comment: "k3s cluster LAN (Cilium/kubelet)" }
+        - { src: "10.44.0.0/16", comment: "k3s pod CIDR (Cilium native routing)" }
+      when: inventory_hostname == 'archlinux'
+      tags: [archlinux, k3s, ufw]
+
+    - name: Allow routed (forwarded) traffic from/to the pod CIDR
+      community.general.ufw:
+        rule: allow
+        route: true
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        comment: "k3s pod CIDR routed (Cilium native routing)"
+      loop:
+        - { src: "10.44.0.0/16", dest: "any" }
+        - { src: "any", dest: "10.44.0.0/16" }
+      when: inventory_hostname == 'archlinux'
+      tags: [archlinux, k3s, ufw]

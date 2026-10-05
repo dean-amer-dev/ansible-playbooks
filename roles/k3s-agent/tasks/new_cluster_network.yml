@@ -1,0 +1,58 @@
+---
+# Name this host's LAN NIC lan0 (matched by MAC) so Cilium's `devices: lan0` finds it.
+# Only writes the .link file: the rename takes effect at the next boot, which Alex performs.
+# this host's NetworkManager profile is bound to neither interface name nor MAC, and addressing
+# is a static 10.100.20.19/24, so the rename does not change connectivity.
+
+- name: Find the NIC that carries the node IP
+  ansible.builtin.set_fact:
+    k3s_agent_nc_nic_facts: "{{ ansible_facts[ansible_facts.default_ipv4.interface | replace('-', '_')] }}"
+
+- name: Assert the default-route NIC really carries the node IP (never rename a guess)
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.default_ipv4.address == k3s_agent_nc_node_ip
+      - k3s_agent_nc_nic_facts.macaddress | regex_search('^([0-9a-f]{2}:){5}[0-9a-f]{2}$') is not none
+    fail_msg: "default-route NIC {{ ansible_facts.default_ipv4.interface }} does not carry {{ k3s_agent_nc_node_ip }}"
+
+- name: Install the .link file naming the NIC {{ k3s_agent_nc_lan_nic_name }}
+  ansible.builtin.copy:
+    dest: "/etc/systemd/network/10-{{ k3s_agent_nc_lan_nic_name }}.link"
+    content: |
+      # Managed by Ansible (role k3s-agent)
+      [Match]
+      MACAddress={{ k3s_agent_nc_nic_facts.macaddress }}
+
+      [Link]
+      Name={{ k3s_agent_nc_lan_nic_name }}
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Nothing in /etc/network or /etc/netplan may name the old interface
+  ansible.builtin.shell: grep -rIl -w '{{ k3s_agent_nc_nic_facts.device }}' /etc/network /etc/netplan 2>/dev/null || true
+  register: k3s_agent_nc_old_name_refs
+  changed_when: false
+  check_mode: false
+  failed_when: k3s_agent_nc_old_name_refs.stdout | trim | length > 0
+  when: k3s_agent_nc_nic_facts.device != k3s_agent_nc_lan_nic_name
+
+- name: Dry-run udev - which link file will name this NIC at next boot?
+  ansible.builtin.command: udevadm test-builtin net_setup_link /sys/class/net/{{ k3s_agent_nc_nic_facts.device }}
+  register: k3s_agent_nc_udev_test
+  changed_when: false
+  when: k3s_agent_nc_nic_facts.device != k3s_agent_nc_lan_nic_name and not ansible_check_mode
+
+- name: Assert udev will pick our file
+  ansible.builtin.assert:
+    that:
+      - "'ID_NET_LINK_FILE=/etc/systemd/network/10-' ~ k3s_agent_nc_lan_nic_name ~ '.link' in k3s_agent_nc_udev_test.stdout"
+    fail_msg: "udev would not rename to {{ k3s_agent_nc_lan_nic_name }}: {{ k3s_agent_nc_udev_test.stdout }}"
+  when: k3s_agent_nc_nic_facts.device != k3s_agent_nc_lan_nic_name and not ansible_check_mode
+
+- name: Report whether a reboot is needed (never rebooted by this role)
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'REBOOT REQUIRED: NIC is still ' ~ k3s_agent_nc_nic_facts.device ~ ', becomes ' ~ k3s_agent_nc_lan_nic_name ~ ' at next boot. Alex reboots.'
+         if k3s_agent_nc_nic_facts.device != k3s_agent_nc_lan_nic_name
+         else 'NIC is already ' ~ k3s_agent_nc_lan_nic_name ~ '.' }}

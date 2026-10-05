@@ -23,3 +23,15 @@ k3s_agent_node_labels:
 # cap, which combined with a bloated meta.db can slow containerd's boot to a
 # crawl.
 k3s_agent_containerd_meta_ssd_dir: ""
+
+# --- New-cluster mode (Infrastructure 2.0): joins the gmktec cluster instead of the legacy one.
+# Enabled per host (see group_vars/archlinux_k3s.yml). Skips the legacy config/containerd paths.
+k3s_agent_new_cluster: false
+k3s_agent_nc_version: "v1.36.4+k3s1"            # must match the servers
+k3s_agent_nc_server: "https://10.100.20.161:6443"   # kube-vip API VIP
+k3s_agent_nc_node_ip: "{{ ansible_host }}"
+k3s_agent_nc_data_dir: /var/lib/rancher/k3s
+k3s_agent_nc_node_labels: []
+k3s_agent_nc_node_taints: []
+k3s_agent_nc_lan_nic_name: lan0                  # Cilium devices: lan0
+# k3s_agent_nc_join_token is a fact handed over by the playbook's first play (never in git).

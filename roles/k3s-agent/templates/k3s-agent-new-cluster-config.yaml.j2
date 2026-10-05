@@ -1,0 +1,23 @@
+# Managed by Ansible (role k3s-agent, new-cluster mode) -- do not edit by hand.
+server: "{{ k3s_agent_nc_server }}"
+token: "{{ k3s_agent_nc_join_token }}"
+
+node-name: "{{ inventory_hostname }}"
+node-ip: "{{ k3s_agent_nc_node_ip }}"
+
+data-dir: "{{ k3s_agent_nc_data_dir }}"
+log: "/var/log/k3s-agent.log"
+{% if k3s_agent_nc_node_labels | length > 0 %}
+
+node-label:
+{% for label in k3s_agent_nc_node_labels %}
+  - "{{ label }}"
+{% endfor %}
+{% endif %}
+{% if k3s_agent_nc_node_taints | length > 0 %}
+
+node-taint:
+{% for taint in k3s_agent_nc_node_taints %}
+  - "{{ taint }}"
+{% endfor %}
+{% endif %}

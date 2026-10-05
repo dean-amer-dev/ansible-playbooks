@@ -8,3 +8,7 @@ longhorn_k8s_namespace: default
 # GitHub ARC runner pods use supplementalGroups: [989] (docker GID on Debian murderbot).
 # tasks/archlinux-arc-docker-gid.yml sets host group `docker` to this GID so /var/run/docker.sock works.
 arc_runner_docker_socket_gid: 989
+
+# Joins the Infrastructure 2.0 cluster (gmktec) as a plain worker: no taint, no Longhorn labels.
+k3s_agent_new_cluster: true
+k3s_agent_nc_node_ip: "{{ archlinux_ip }}"
