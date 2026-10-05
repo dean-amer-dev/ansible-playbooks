@@ -1,5 +1,5 @@
 ---
-# Join archlinux to the Infrastructure 2.0 cluster as a plain worker (role k3s-agent, new-cluster mode).
+# Join archlinux to the Infrastructure 2.0 cluster as a tainted GPU worker (role k3s-agent, new-cluster mode).
 # Never reboots: the NIC becomes lan0 at the next boot (Alex reboots), then re-run to start the agent.
 # Run the whole playbook (no --limit): the first play hands the join token over as a fact.
 #

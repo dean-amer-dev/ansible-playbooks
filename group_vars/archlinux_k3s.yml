@@ -9,6 +9,11 @@ longhorn_k8s_namespace: default
 # tasks/archlinux-arc-docker-gid.yml sets host group `docker` to this GID so /var/run/docker.sock works.
 arc_runner_docker_socket_gid: 989
 
-# Joins the Infrastructure 2.0 cluster (gmktec) as a plain worker: no taint, no Longhorn labels.
+# Joins the Infrastructure 2.0 cluster (gmktec) as a tainted GPU worker, same as murderbot:
+# label + taint applied at registration; only toleration-carrying GPU workloads land here.
 k3s_agent_new_cluster: true
 k3s_agent_nc_node_ip: "{{ archlinux_ip }}"
+k3s_agent_nc_node_labels:
+  - "gpu-worker=true"
+k3s_agent_nc_node_taints:
+  - "gpu-worker=true:NoSchedule"
