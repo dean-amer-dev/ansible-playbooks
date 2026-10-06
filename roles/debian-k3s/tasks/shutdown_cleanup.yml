@@ -32,3 +32,17 @@
     name: k3s-shutdown-cleanup.service
     enabled: true
     state: started
+
+# Boot side of the same problem: network-online.target is reached before lan0 has carrier and its address
+# (ifup@lan0 is still "waiting for carrier"), so k3s's first start dies with "bind: cannot assign requested
+# address" and only succeeds after RestartSec. Hold k3s until the node IP is really configured.
+- name: Make k3s wait for its node IP before the first start
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/k3s.service.d/20-wait-for-node-ip.conf
+    content: |
+      [Service]
+      ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until ip -o -4 addr show | grep -q " {{ debian_k3s_node_ip }}/"; do sleep 0.5; done'
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
