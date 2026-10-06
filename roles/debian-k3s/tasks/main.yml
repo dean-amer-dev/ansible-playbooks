@@ -55,6 +55,10 @@
   ansible.builtin.import_tasks: k3s.yml
   tags: [k3s]
 
+- name: Orderly container stop at shutdown
+  ansible.builtin.import_tasks: shutdown_cleanup.yml
+  tags: [shutdown_cleanup]
+
 - name: Cilium CNI
   ansible.builtin.import_tasks: cilium.yml
   tags: [cilium]

@@ -1,0 +1,34 @@
+---
+# Stop the containers k3s leaves running (KillMode=process) in an orderly, logged way at shutdown,
+# instead of leaving them to systemd's final kill stage. See templates/k3s-shutdown-cleanup.sh.j2.
+- name: Install bc (timestamps in the cleanup script)
+  ansible.builtin.apt:
+    name: bc
+    state: present
+
+- name: Install shutdown cleanup script
+  ansible.builtin.template:
+    src: k3s-shutdown-cleanup.sh.j2
+    dest: /usr/local/sbin/k3s-shutdown-cleanup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install shutdown cleanup unit
+  ansible.builtin.template:
+    src: k3s-shutdown-cleanup.service.j2
+    dest: /etc/systemd/system/k3s-shutdown-cleanup.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so the unit is known
+  ansible.builtin.meta: flush_handlers
+
+# enabled + started: ExecStart is /bin/true with RemainAfterExit, so "started" only arms the ExecStop.
+- name: Enable and arm the unit
+  ansible.builtin.systemd:
+    name: k3s-shutdown-cleanup.service
+    enabled: true
+    state: started
