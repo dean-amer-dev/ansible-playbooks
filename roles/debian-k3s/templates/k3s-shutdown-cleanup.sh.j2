@@ -1,0 +1,53 @@
+#!/bin/bash
+# Managed by Ansible (role debian-k3s)
+# Runs as ExecStop of k3s-shutdown-cleanup.service, i.e. AFTER k3s.service has stopped (the unit is
+# Before=k3s.service) and BEFORE the network and filesystems go down. k3s.service uses KillMode=process,
+# so every container keeps running after k3s stops; without this script systemd-shutdown kills them in
+# its final stage, after the journal is closed, and waits on whatever is slow. Here the work happens
+# with the journal alive, so every step is timestamped.
+#   phase 1: SIGTERM every process under a containerd-shim, wait up to TERM_WAIT, log who exits when
+#   phase 2: SIGKILL whatever is left, then the shims
+TERM_WAIT={{ debian_k3s_shutdown_term_wait }}
+SHIM_RE='/var/lib/rancher/k3s/data/[^/]*/bin/containerd-shim'
+
+now() { date +%s.%N; }
+START=$(now)
+log() { printf 'k3s-shutdown-cleanup: +%.1fs %s\n' "$(echo "$(now) - $START" | bc)" "$*"; }
+
+descendants() {  # all pids below the given pids
+  ps -e -o pid= -o ppid= | awk -v roots="$*" '
+    { kids[$2] = kids[$2] " " $1 }
+    END { n = split(roots, q, " "); for (i = 1; i <= n; i++) { r = q[i]; m = split(kids[r], c, " "); for (j = 1; j <= m; j++) { print c[j]; q[++n] = c[j] } } }'
+}
+
+shims=$(pgrep -f "$SHIM_RE" | tr '\n' ' ')
+pids=$(descendants $shims | sort -un | tr '\n' ' ')
+log "begin: $(echo $shims | wc -w) shims, $(echo $pids | wc -w) container processes, $(findmnt -rn -t nfs,nfs4 | wc -l) NFS mounts"
+[ -n "$pids" ] || { log "nothing to do"; exit 0; }
+
+declare -A name
+for p in $pids; do name[$p]=$(cat /proc/$p/comm 2>/dev/null); done
+[ -n "$pids" ] && kill -TERM $pids 2>/dev/null
+
+alive=$pids
+for i in $(seq 1 "$TERM_WAIT"); do
+  next=""
+  for p in $alive; do
+    if [ -d /proc/$p ] && ! grep -q '^State:.*Z' /proc/$p/status 2>/dev/null; then next="$next $p"; else log "exited after SIGTERM: ${name[$p]} ($p)"; fi
+  done
+  alive=$next
+  [ -z "$(echo $alive)" ] && break
+  sleep 1
+done
+
+if [ -n "$(echo $alive)" ]; then
+  for p in $alive; do log "still alive after ${TERM_WAIT}s, SIGKILL: ${name[$p]} ($p)"; done
+  kill -KILL $alive 2>/dev/null
+fi
+[ -n "$shims" ] && kill -KILL $shims 2>/dev/null
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  pgrep -f "$SHIM_RE" >/dev/null || break
+  sleep 1
+done
+log "done: $(pgrep -fc "$SHIM_RE") shims left, $(findmnt -rn -t nfs,nfs4 | wc -l) NFS mounts still present"
+exit 0

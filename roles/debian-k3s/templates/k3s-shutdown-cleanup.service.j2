@@ -1,0 +1,15 @@
+# Managed by Ansible (role debian-k3s)
+[Unit]
+Description=Stop k3s containers promptly at shutdown (with timestamps) so the final shutdown stage has nothing to wait on
+Before=k3s.service
+After=network-online.target local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/k3s-shutdown-cleanup
+TimeoutStopSec={{ debian_k3s_shutdown_term_wait | int + 40 }}
+
+[Install]
+WantedBy=multi-user.target

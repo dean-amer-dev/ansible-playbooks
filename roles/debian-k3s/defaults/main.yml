@@ -107,3 +107,4 @@ debian_k3s_longhorn_packages:
 debian_k3s_longhorn_modules:
   - iscsi_tcp
   - dm_crypt
+debian_k3s_shutdown_term_wait: 20   # seconds to wait for container processes after SIGTERM at shutdown before SIGKILL
