@@ -1,0 +1,30 @@
+---
+# Role: k3s-rolling-reboot
+# Reboots the debian_k3s servers ONE AT A TIME, only while the cluster is healthy and at least
+# rolling_reboot_min_healthy_replicas healthy replicas of every replicated service stay up on the
+# other nodes. See docs/debian-k3s/rolling-reboot.md.
+
+# Must be passed on the command line (-e rolling_reboot_confirm=yes); a bare run refuses.
+rolling_reboot_confirm: false
+
+rolling_reboot_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/dean.yaml"   # points at the API VIP
+rolling_reboot_min_healthy_replicas: 2
+
+# Replicated services that must be fully healthy before AND after each reboot, and must keep
+# rolling_reboot_min_healthy_replicas healthy replicas on the OTHER nodes while one is down.
+rolling_reboot_replica_services:
+  - { name: postgres,   namespace: postgres,   selector: "cnpg.io/cluster=pg",         replicas: 3 }
+  - { name: mongodb,    namespace: mongodb,    selector: "app=unifi-mongodb-svc",      replicas: 3 }
+  - { name: couchdb,    namespace: couchdb,    selector: "app=couchdb",                replicas: 3 }
+  - { name: technitium, namespace: technitium, selector: "app=technitium",             replicas: 3 }
+  - { name: coredns,    namespace: kube-system, selector: "k8s-app=kube-dns",          replicas: 3 }
+
+# Regexes (namespace/name) of pods that are known-unhealthy and must not block a reboot. Keep EMPTY.
+rolling_reboot_ignore_pods: []
+
+rolling_reboot_drain_timeout: 600s
+rolling_reboot_reboot_timeout: 1200         # seconds to wait for ssh after the reboot command
+rolling_reboot_node_ready_timeout: 900s
+rolling_reboot_cilium_retries: 90           # x 20s = 30 min: Cilium's endpoint stall can take ~5.5 min
+rolling_reboot_post_health_retries: 90      # x 20s = 30 min for replicas to catch up
+rolling_reboot_settle_seconds: 60

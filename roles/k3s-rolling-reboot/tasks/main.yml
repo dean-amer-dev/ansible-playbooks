@@ -1,0 +1,90 @@
+---
+# Reboots ONE node; the playbook runs this with serial: 1 and any_errors_fatal, so the first
+# failure anywhere stops the whole rolling reboot and leaves later nodes untouched.
+# kubectl work runs on the control host (delegate_to localhost) against the API VIP.
+
+- name: Refuse to run without explicit confirmation
+  ansible.builtin.assert:
+    that: rolling_reboot_confirm | bool
+    fail_msg: >-
+      This playbook reboots servers. Re-run with -e rolling_reboot_confirm=yes, and only with
+      Alex's permission for this run (see docs/debian-k3s/rolling-reboot.md).
+    quiet: true
+
+- name: Rolling reboot of {{ inventory_hostname }}
+  environment:
+    KUBECONFIG: "{{ rolling_reboot_kubeconfig }}"
+  block:
+    - name: Gate (pre) - cluster healthy and >= {{ rolling_reboot_min_healthy_replicas }} healthy replicas stay up elsewhere
+      ansible.builtin.include_tasks: gate_pre.yml
+
+    - name: Move the Postgres primary off this node first
+      ansible.builtin.include_tasks: switchover.yml
+      when: rolling_reboot_gate_info.info.postgres_primary_node | default('') == inventory_hostname
+
+    - name: Cordon {{ inventory_hostname }}
+      ansible.builtin.command: kubectl cordon {{ inventory_hostname }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Drain {{ inventory_hostname }} (honours PodDisruptionBudgets)
+      ansible.builtin.command: >-
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+        --force --timeout={{ rolling_reboot_drain_timeout }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Reboot {{ inventory_hostname }}
+      ansible.builtin.reboot:
+        msg: "rolling reboot by ansible (k3s-rolling-reboot)"
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+        reboot_timeout: "{{ rolling_reboot_reboot_timeout }}"
+        test_command: uptime
+      become: true
+
+    - name: Wait for {{ inventory_hostname }} to be Ready
+      ansible.builtin.command: >-
+        kubectl wait --for=condition=Ready node/{{ inventory_hostname }}
+        --timeout={{ rolling_reboot_node_ready_timeout }}
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    # Stay cordoned until the node's Cilium is healthy, so pods start into a working CNI.
+    - name: Wait for Cilium and its Envoy on {{ inventory_hostname }} to be Ready
+      ansible.builtin.command: >-
+        kubectl -n kube-system get pods -l k8s-app={{ item }}
+        --field-selector spec.nodeName={{ inventory_hostname }}
+        -o jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}
+      loop: [cilium, cilium-envoy]
+      delegate_to: localhost
+      become: false
+      register: rolling_reboot_cilium
+      until: rolling_reboot_cilium.stdout | trim == 'True'
+      retries: "{{ rolling_reboot_cilium_retries }}"
+      delay: 20
+      changed_when: false
+
+    - name: Uncordon {{ inventory_hostname }}
+      ansible.builtin.command: kubectl uncordon {{ inventory_hostname }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Gate (post) - everything healthy again, all replicas caught up
+      ansible.builtin.include_tasks: gate_post.yml
+
+    - name: Let the cluster settle before the next node
+      ansible.builtin.pause:
+        seconds: "{{ rolling_reboot_settle_seconds }}"
+
+  rescue:
+    - name: Stop - leave everything as it is for a human
+      ansible.builtin.fail:
+        msg: >-
+          Rolling reboot stopped at {{ inventory_hostname }}. The node is left exactly as it was
+          at the failure (cordoned and/or drained if it got that far). No other node was touched.
+          Check `kubectl get nodes` and the failed task above before doing anything else.
