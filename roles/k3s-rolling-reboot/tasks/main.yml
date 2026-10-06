@@ -7,8 +7,8 @@
   ansible.builtin.assert:
     that: rolling_reboot_confirm | bool
     fail_msg: >-
-      This playbook reboots servers. Re-run with -e rolling_reboot_confirm=yes, and only with
-      Alex's permission for this run (see docs/debian-k3s/rolling-reboot.md).
+      This playbook reboots servers. Re-run with -e rolling_reboot_confirm=yes (a deliberate
+      flag so a bare or accidental run does nothing). See docs/debian-k3s/rolling-reboot.md.
     quiet: true
 
 - name: Rolling reboot of {{ inventory_hostname }}

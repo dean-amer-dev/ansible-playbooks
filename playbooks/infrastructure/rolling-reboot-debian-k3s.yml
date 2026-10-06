@@ -5,7 +5,8 @@
 # waits for Cilium, uncordons, then waits for every replica to catch up before the next node.
 # The first failure stops the whole run and leaves the remaining nodes untouched.
 #
-# Needs Alex's permission for every run (see docs/debian-k3s/rolling-reboot.md), then:
+# No per-run permission needed (Alex, 2026-10-06): it is gated, and k3s tolerates one node down.
+# Never bypass or weaken the gate (see docs/debian-k3s/rolling-reboot.md). Run:
 #   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/rolling-reboot-debian-k3s.yml \
 #       -e rolling_reboot_confirm=yes
 # Add --limit gmktec-2 to do a single node. --check is not supported (it cannot drain or reboot).

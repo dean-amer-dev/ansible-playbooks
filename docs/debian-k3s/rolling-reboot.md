@@ -30,7 +30,9 @@ failed is left exactly as it was (cordoned/drained if it got that far) for a hum
 is rolled back automatically.
 
 ## Running it
-Needs Alex's permission for every run. Prerequisites on the control host: `kubectl`, `~/.kube/dean.yaml`
+No per-run permission is needed (Alex, 2026-10-06: k3s tolerates one node down, and this playbook is
+gated). That only holds while the gate stays intact: never bypass it, weaken it, ignore pods to get a run
+through, or force past it. If it refuses, read why and stop. Prerequisites on the control host: `kubectl`, `~/.kube/dean.yaml`
 (API VIP), `kubectl-cnpg` (pinned 1.30.1 in `~/.local/bin`; only used if the primary is on the node).
 ```
 ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/rolling-reboot-debian-k3s.yml \
