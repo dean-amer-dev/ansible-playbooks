@@ -18,7 +18,9 @@
 # switching is a separate joystick-notify code change (actions/cursor.py),
 # deployed on its own schedule.
 #
-# To restore the normal cursor: re-run with -e mouse_hide_theme=breeze_cursors
+# Default applies the NORMAL theme (breeze_cursors): this role installs the invisible
+# theme but never leaves the cursor hidden. Hiding is done by joystick-notify's
+# tools/mouse-hider at runtime.
 
 - name: Install xcursorgen (builds the Xcursor binary from PNG)
   ansible.builtin.pacman:
@@ -101,7 +103,7 @@
     path: "{{ cachyos_user_home }}/.config/kcminputrc"
     section: Mouse
     option: cursorTheme
-    value: "{{ mouse_hide_theme | default('invisible') }}"
+    value: "{{ mouse_hide_theme | default('breeze_cursors') }}"
     owner: "{{ cachyos_user }}"
     group: "{{ cachyos_user }}"
     mode: "0644"
@@ -124,7 +126,7 @@
   ansible.builtin.copy:
     content: |
       [Icon Theme]
-      Inherits={{ mouse_hide_theme | default('invisible') }}
+      Inherits={{ mouse_hide_theme | default('breeze_cursors') }}
     dest: "{{ cachyos_user_home }}/.icons/default/index.theme"
     owner: "{{ cachyos_user }}"
     group: "{{ cachyos_user }}"
@@ -136,7 +138,7 @@
 - name: Apply cursor theme to live KWin and verify (forces past stale compositor state)
   ansible.builtin.shell: |
     set -eu
-    target="{{ mouse_hide_theme | default('invisible') }}"
+    target="{{ mouse_hide_theme | default('breeze_cursors') }}"
     live() { qdbus6 org.kde.KWin /KWin supportInformation | sed -n '/^Cursor$/,/^$/p' | sed -n 's/^themeName: *//p'; }
     [ "$(live)" = "$target" ] && exit 0
     plasma-apply-cursortheme "$target" >/dev/null
