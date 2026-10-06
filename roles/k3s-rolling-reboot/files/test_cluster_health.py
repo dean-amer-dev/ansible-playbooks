@@ -13,9 +13,9 @@ SERVICES = [
 NODES = ["gmktec-1", "gmktec-2", "gmktec-3"]
 
 
-def node(name, ready=True, cordoned=False, core=True):
+def node(name, ready=True, cordoned=False, core=True, taints=None):
     labels = {"node-role.kubernetes.io/control-plane": "true"} if core else {}
-    return {"metadata": {"name": name, "labels": labels}, "spec": {"unschedulable": cordoned},
+    return {"metadata": {"name": name, "labels": labels}, "spec": {"unschedulable": cordoned, "taints": taints or []},
             "status": {"conditions": [{"type": "Ready", "status": "True" if ready else "Unknown"}]}}
 
 
@@ -133,6 +133,16 @@ class GateTests(unittest.TestCase):
         self.assertIn("0/1 containers ready", msg)
         self.assertIn("CrashLoopBackOff", msg)
         self.assertIn("5 restarts", msg)
+
+    def test_leftover_diagnostic_taint_blocks(self):
+        s = healthy_snapshot()
+        s["nodes"][0] = node("gmktec-1", taints=[{"key": "bisect", "value": "1", "effect": "NoExecute"}])
+        self.assertTrue(any("diagnostic taint" in f for f in run(s)[0]))
+
+    def test_other_taints_are_fine(self):
+        s = healthy_snapshot()
+        s["nodes"][0] = node("gmktec-1", taints=[{"key": "node-role.kubernetes.io/control-plane", "effect": "NoSchedule"}])
+        self.assertEqual(run(s)[0], [])
 
     def test_succeeded_job_pods_are_fine(self):
         s = healthy_snapshot()

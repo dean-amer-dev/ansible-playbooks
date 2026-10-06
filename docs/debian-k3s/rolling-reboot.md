@@ -54,3 +54,27 @@ Unit tests: `python3 -m unittest roles/k3s-rolling-reboot/files/test_cluster_hea
   open issue in INC-2026-10-05b); the reboot timeout allows 20 minutes.
 - Local-volume pods (pg, couchdb, mongodb, technitium replica on the node) stay Pending while the node is
   down; that is why every service must be 3/3 before the reboot starts.
+
+## Timing records (always on)
+Every node's run prints a timing summary and writes `~/.local/share/rolling-reboot/<host>-<utc>/<host>-<utc>.json`
+(also when it stops early): drain time, reboot-command-to-ssh, the SHUTDOWN GAP (last journal line of
+the boot that ended to first kernel line of the new boot, read from the node's journal), ssh to node
+Ready, node Ready to Cilium Ready, post-gate time, total. Compare runs with these records.
+
+## Opt-in diagnostics (INC-2026-10-05b; all off by default)
+Pass with `-e`. They only ever touch the node being rebooted, after it is cordoned and drained.
+| variable | what it does |
+|---|---|
+| `rolling_reboot_bisect_taint=bisect=1:NoExecute` | after the drain, taint the node so DaemonSet pods that do not tolerate everything (tdarr-node etc.) are evicted before the reboot; the pod list is saved; taint removed before uncordon. The gate refuses to start while a `bisect` taint is left on any node. Tests the shutdown delay |
+| `rolling_reboot_stall_probe_seconds=60` | N seconds after the node is Ready, check every pod on it is ready; if not, the Cilium stall happened |
+| `rolling_reboot_capture_on_stall=true` | at the stall, save read-only Cilium agent/Envoy state under `<run dir>/capture` (agent and Envoy logs, `cilium-dbg status --all-controllers`, limiter metrics, `cilium-dbg envoy admin` metrics/config/listeners/clusters; look at `envoy_cilium_npds_*`) |
+| `rolling_reboot_envoy_restart_on_stall=true` | at the stall, after the capture, delete that node's `cilium-envoy` pod (upstream workaround) and keep timing |
+
+Example (first diagnostic run on one node):
+```
+ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/rolling-reboot-debian-k3s.yml \
+  --limit gmktec-2 -e rolling_reboot_confirm=yes -e rolling_reboot_bisect_taint=bisect=1:NoExecute \
+  -e rolling_reboot_stall_probe_seconds=60 -e rolling_reboot_capture_on_stall=true \
+  -e rolling_reboot_envoy_restart_on_stall=true
+```
+Unit tests for all gate/helper scripts: `python3 -B -m unittest discover -s roles/k3s-rolling-reboot/files -p 'test_*.py'`.

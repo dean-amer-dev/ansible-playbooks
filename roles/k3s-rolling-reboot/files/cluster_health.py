@@ -32,6 +32,7 @@ def kubectl_json(kubeconfig, *args):
 
 
 CORE_LABEL = "node-role.kubernetes.io/control-plane"
+DIAGNOSTIC_TAINT_KEY = "bisect"   # set only by the opt-in rolling_reboot_bisect_taint test
 
 
 def node_ready(node):
@@ -91,6 +92,10 @@ def evaluate(snap, phase, target, min_elsewhere, services, ignore_pod_regex, exp
             failures.append("node %s is not Ready" % name)
         if n["spec"].get("unschedulable"):
             failures.append("node %s is cordoned (another maintenance may be in progress)" % name)
+        for t in n["spec"].get("taints") or []:
+            if t.get("key") == DIAGNOSTIC_TAINT_KEY:
+                failures.append("node %s still carries the diagnostic taint '%s' from an earlier run; remove it first"
+                                % (name, DIAGNOSTIC_TAINT_KEY))
     if phase == "pre" and target not in core:
         failures.append("target node %s is not a control-plane node in this cluster" % target)
 

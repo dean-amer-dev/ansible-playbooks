@@ -28,3 +28,22 @@ rolling_reboot_node_ready_timeout: 900s
 rolling_reboot_cilium_retries: 90           # x 20s = 30 min: Cilium's endpoint stall can take ~5.5 min
 rolling_reboot_post_health_retries: 90      # x 20s = 30 min for replicas to catch up
 rolling_reboot_settle_seconds: 60
+
+# --- timing records (always on) -------------------------------------------------------------
+# Every run writes a JSON record and prints a timing summary per node (shutdown gap, time to
+# Ready, time to Cilium Ready, ...). Records accumulate here on the control host.
+rolling_reboot_results_dir: "{{ lookup('env', 'HOME') }}/.local/share/rolling-reboot"
+
+# --- opt-in diagnostics for INC-2026-10-05b (all OFF by default) ----------------------------
+# Taint test for the shutdown delay: after the drain, taint the node so DaemonSet pods that do not
+# tolerate everything (tdarr-node etc.) are evicted BEFORE the reboot; removed again before
+# uncordon. Must start with "bisect=" (the gate refuses to start while such a taint is left behind).
+rolling_reboot_bisect_taint: ""            # e.g. "bisect=1:NoExecute"
+rolling_reboot_bisect_taint_settle_seconds: 90
+
+# Cilium stall probe: N seconds after the node is Ready, check whether every pod on it is ready.
+# If not, the node is "stalled": optionally capture Cilium/Envoy state (read-only) and optionally
+# delete the node's cilium-envoy pod (the upstream workaround) and keep timing.
+rolling_reboot_stall_probe_seconds: 0      # 0 = off; 60 is a good value
+rolling_reboot_capture_on_stall: false
+rolling_reboot_envoy_restart_on_stall: false
