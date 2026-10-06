@@ -123,6 +123,17 @@ class GateTests(unittest.TestCase):
         s["pods"].append(p)
         self.assertTrue(any("redis-0" in f for f in run(s)[0]))
 
+    def test_running_but_unready_pod_message_is_specific(self):
+        s = healthy_snapshot()
+        p = pod("mcp", "obsidian-x", "gmktec-1", {}, ready=False)
+        p["status"]["containerStatuses"] = [{"ready": False, "restartCount": 5,
+                                              "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]
+        failures = run(s)[0] if False else run({**s, "pods": s["pods"] + [p]})[0]
+        msg = [f for f in failures if "obsidian-x" in f][0]
+        self.assertIn("0/1 containers ready", msg)
+        self.assertIn("CrashLoopBackOff", msg)
+        self.assertIn("5 restarts", msg)
+
     def test_succeeded_job_pods_are_fine(self):
         s = healthy_snapshot()
         s["pods"].append(pod("postgres", "pg-backup-1", "gmktec-1", {}, ready=False, phase="Succeeded"))

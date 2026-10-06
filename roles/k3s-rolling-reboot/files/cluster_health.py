@@ -44,6 +44,20 @@ def pod_ready(pod):
     return any(c["type"] == "Ready" and c["status"] == "True" for c in pod["status"].get("conditions", []))
 
 
+def pod_state(pod):
+    """Short human description of why a pod is not healthy."""
+    phase = pod["status"].get("phase", "?")
+    if pod["metadata"].get("deletionTimestamp"):
+        return "Terminating"
+    statuses = pod["status"].get("containerStatuses") or []
+    if phase == "Running" and statuses:
+        ready = sum(1 for c in statuses if c.get("ready"))
+        waiting = next((c["state"]["waiting"].get("reason") for c in statuses if c.get("state", {}).get("waiting")), None)
+        restarts = sum(c.get("restartCount", 0) for c in statuses)
+        return "Running, %d/%d containers ready, %s, %d restarts" % (ready, len(statuses), waiting or "not ready", restarts)
+    return phase
+
+
 def pod_healthy(pod):
     """Healthy = finished OK (Job pod), or running with every container ready and not terminating."""
     phase = pod["status"].get("phase")
@@ -96,7 +110,7 @@ def evaluate(snap, phase, target, min_elsewhere, services, ignore_pod_regex, exp
         if any(r.search(full) for r in ignore):
             continue
         if not pod_healthy(p):
-            failures.append("pod %s is %s" % (full, p["status"].get("phase", "?")))
+            failures.append("pod %s is not healthy (%s)" % (full, pod_state(p)))
 
     # --- replicated services: need every replica healthy, and min_elsewhere on other nodes
     for svc in services:
