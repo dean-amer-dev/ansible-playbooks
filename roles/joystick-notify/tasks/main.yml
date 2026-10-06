@@ -135,6 +135,17 @@
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ cachyos_user_uid }}/bus"
   tags: [joystick-notify, service, daemon]
 
+- name: Enable mouse-hider-restore.service (makes the cursor visible at every login)
+  ansible.builtin.systemd:
+    name: mouse-hider-restore.service
+    enabled: true
+    scope: user
+  become: false
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ cachyos_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ cachyos_user_uid }}/bus"
+  tags: [joystick-notify, service, mouse-hide]
+
 - name: Enable joystick-notify-tray.service
   ansible.builtin.systemd:
     name: joystick-notify-tray.service
