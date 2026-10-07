@@ -1,0 +1,80 @@
+---
+# Shared task: keep net.ipv4.conf.all.src_valid_mark at 0 even though tailscaled sets it to 1.
+#
+# tailscale >= 1.98 writes net.ipv4.conf.all.src_valid_mark=1 on every tailscaled start and when it
+# enables its connmark workaround (tailscale/tailscale#19796), so the sysctl.d file alone loses to it.
+# With it at 1 the kernel applies Cilium's 0x200 reply mark during reverse-path validation, the pod
+# address resolves through Cilium's local table and the reply is dropped (IP_LOCAL_SOURCE): every
+# connection from the host to a Cilium-ingress VIP times out (503).
+#
+# Two layers: a tailscaled drop-in that re-asserts 0 right after each (re)start, and a timer that
+# corrects any later write. Both only write when the value is not already 0.
+
+- name: Install the src_valid_mark guard script
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/src-valid-mark-guard
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      f=/proc/sys/net/ipv4/conf/all/src_valid_mark
+      [ "$(cat "$f")" = "0" ] && exit 0
+      echo 0 > "$f" && echo "net.ipv4.conf.all.src_valid_mark was set to 1 (tailscaled?); reset to 0"
+
+- name: Re-assert src_valid_mark=0 after every tailscaled start
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/10-src-valid-mark.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      ExecStartPost=/usr/local/sbin/src-valid-mark-guard
+  register: src_valid_mark_guard_dropin
+
+- name: Install the src_valid_mark guard service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/src-valid-mark-guard.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Reset net.ipv4.conf.all.src_valid_mark to 0 if tailscaled set it (breaks Cilium ingress)
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/src-valid-mark-guard
+  register: src_valid_mark_guard_service
+
+- name: Install the src_valid_mark guard timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/src-valid-mark-guard.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Periodically reset net.ipv4.conf.all.src_valid_mark to 0
+
+      [Timer]
+      OnBootSec=15s
+      OnUnitActiveSec=15s
+      AccuracySec=1s
+
+      [Install]
+      WantedBy=timers.target
+  register: src_valid_mark_guard_timer
+
+- name: Enable the src_valid_mark guard timer
+  ansible.builtin.systemd:
+    name: src-valid-mark-guard.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ src_valid_mark_guard_dropin.changed or src_valid_mark_guard_service.changed or src_valid_mark_guard_timer.changed }}"
+
+- name: Run the guard once so the live value is 0 now
+  ansible.builtin.command: /usr/local/sbin/src-valid-mark-guard
+  register: src_valid_mark_guard_run
+  changed_when: "'reset to 0' in src_valid_mark_guard_run.stdout"
