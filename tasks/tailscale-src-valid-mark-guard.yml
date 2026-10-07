@@ -22,6 +22,14 @@
       [ "$(cat "$f")" = "0" ] && exit 0
       echo 0 > "$f" && echo "net.ipv4.conf.all.src_valid_mark was set to 1 (tailscaled?); reset to 0"
 
+- name: Create the tailscaled drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Re-assert src_valid_mark=0 after every tailscaled start
   ansible.builtin.copy:
     dest: /etc/systemd/system/tailscaled.service.d/10-src-valid-mark.conf
