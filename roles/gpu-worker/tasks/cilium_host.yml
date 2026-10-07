@@ -2,7 +2,8 @@
 # Host sysctls Cilium needs on murderbot. Cilium marks pod replies 0x200 so they reach its Envoy;
 # with src_valid_mark=1 the kernel's reverse-path check applies that mark, resolves the pod
 # address through Cilium's local table and silently drops the reply, so every connection from
-# murderbot to a Cilium-ingress VIP times out (503). tailscaled sets it to 1 when it runs.
+# murderbot to a Cilium-ingress VIP times out (503). tailscaled sets it to 1 on every start
+# (tailscale/tailscale#19796), so tasks/tailscale-src-valid-mark-guard.yml keeps it at 0.
 
 - name: Keep net.ipv4.conf.all.src_valid_mark at 0 (persisted and live)
   ansible.posix.sysctl:
@@ -12,6 +13,9 @@
     sysctl_set: true
     state: present
     reload: true
+
+- name: Keep tailscaled from setting it back to 1 (drop-in + guard timer)
+  ansible.builtin.include_tasks: ../../../tasks/tailscale-src-valid-mark-guard.yml
 
 - name: Read the live value
   ansible.builtin.slurp:
