@@ -1,0 +1,21 @@
+---
+- name: Install Homebrew prerequisites
+  ansible.builtin.import_tasks: packages.yml
+  tags: [llmkube, llmkube-packages]
+
+- name: Install the metal agent binary
+  ansible.builtin.import_tasks: binary.yml
+  tags: [llmkube, llmkube-binary]
+
+- name: Stage the MLX models
+  ansible.builtin.import_tasks: models.yml
+  tags: [llmkube, llmkube-models]
+
+- name: Join the cluster and run the agent
+  ansible.builtin.import_tasks: service.yml
+  tags: [llmkube, llmkube-service]
+
+- name: Run the standalone oMLX audio (Whisper) daemon
+  ansible.builtin.import_tasks: audio.yml
+  when: llmkube_audio_enabled
+  tags: [llmkube, llmkube-audio]

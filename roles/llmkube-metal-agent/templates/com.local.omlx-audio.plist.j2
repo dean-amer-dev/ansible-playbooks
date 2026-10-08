@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ llmkube_audio_label }}</string>
+    <key>UserName</key>
+    <string>{{ llmkube_agent_user }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ llmkube_omlx_bin }}</string>
+        <string>serve</string>
+        <string>--base-path</string>
+        <string>{{ llmkube_audio_base_path }}</string>
+        <string>--model-dir</string>
+        <string>{{ llmkube_audio_model_dir }}</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>{{ llmkube_audio_port }}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{ llmkube_agent_home }}/Library/Logs/llmkube/omlx-audio.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ llmkube_agent_home }}/Library/Logs/llmkube/omlx-audio.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{ llmkube_agent_home }}</string>
+        <key>PATH</key>
+        <string>{{ llmkube_homebrew_bin }}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>OMLX_API_KEY</key>
+        <string>{{ (llmkube_audio_secret.stdout | from_json).value }}</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>{{ llmkube_agent_home }}</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

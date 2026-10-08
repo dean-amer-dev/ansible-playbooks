@@ -84,3 +84,11 @@ runner_bws_secrets:
     bws_id: "c5ad7fae-2f58-4a8b-9651-b413001cad7f"
   - name: github-pat-k3s-dean-gitops
     bws_id: "42ea6b6b-3b1e-43d9-8743-b41301665cc9"
+
+# ─── LLMKube Metal agent / oMLX (roles/llmkube-metal-agent) ──────────────────
+# MLX models staged in the agent's model store as <store>/<repo> (owner/repo layout, which the
+# InferenceService Model.spec.source references). Qwen3.5-9B chat (~5.6 GB) plus a 768-dim embedding
+# model (matches mem0's vector(768) column).
+llmkube_models:
+  - repo: mlx-community/Qwen3.5-9B-MLX-4bit
+  - repo: mlx-community/nomicai-modernbert-embed-base-8bit

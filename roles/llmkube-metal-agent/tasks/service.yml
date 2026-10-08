@@ -1,0 +1,75 @@
+---
+- name: Read the agent ServiceAccount token Secret from the cluster
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ llmkube_control_kubeconfig }} -n {{ llmkube_namespace }}
+    get secret {{ llmkube_token_secret }} -o json
+  delegate_to: localhost
+  become: false
+  register: llmkube_sa_secret_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse the token Secret
+  ansible.builtin.set_fact:
+    llmkube_sa_secret: "{{ llmkube_sa_secret_raw.stdout | from_json }}"
+  no_log: true
+
+- name: Fail if the token Secret has not been populated
+  ansible.builtin.assert:
+    that:
+      - llmkube_sa_secret.data['token'] is defined
+      - llmkube_sa_secret.data['ca.crt'] is defined
+    fail_msg: "Secret {{ llmkube_token_secret }} has no token yet; apply dean-tofu k3s/infra/prod/llm-metal-agent first"
+
+- name: Create agent directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ llmkube_agent_home }}/.kube", mode: "0700" }
+    - { path: "{{ llmkube_agent_home }}/Library/Logs/llmkube", mode: "0700" }
+
+- name: Install the agent kubeconfig
+  ansible.builtin.template:
+    src: kubeconfig.yaml.j2
+    dest: "{{ llmkube_agent_kubeconfig }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart llmkube metal agent
+
+- name: Install the agent LaunchDaemon
+  ansible.builtin.template:
+    src: com.llmkube.metal-agent.plist.j2
+    dest: "{{ llmkube_agent_plist }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  notify: Restart llmkube metal agent
+
+- name: Check whether the agent LaunchDaemon is loaded
+  ansible.builtin.command: "launchctl print system/{{ llmkube_agent_label }}"
+  become: true
+  register: llmkube_agent_loaded
+  failed_when: false
+  changed_when: false
+
+- name: Load the agent LaunchDaemon
+  ansible.builtin.command: "launchctl bootstrap system {{ llmkube_agent_plist }}"
+  become: true
+  when: llmkube_agent_loaded.rc != 0
+  changed_when: true
+
+- name: Apply pending agent restarts now
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the agent to report healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llmkube_agent_port }}/healthz"
+    status_code: 200
+  register: llmkube_agent_health
+  until: llmkube_agent_health.status == 200
+  retries: 12
+  delay: 5
+  changed_when: false

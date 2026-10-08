@@ -1,0 +1,22 @@
+---
+- name: Create the model store
+  ansible.builtin.file:
+    path: "{{ llmkube_model_store }}"
+    state: directory
+    mode: "0700"
+
+- name: Remove model directories from earlier layouts
+  ansible.builtin.file:
+    path: "{{ llmkube_model_store }}/{{ item }}"
+    state: absent
+  loop: "{{ llmkube_model_store_stale }}"
+
+- name: Download MLX models from Hugging Face
+  ansible.builtin.command:
+    cmd: "{{ llmkube_agent_home }}/.local/bin/hf download {{ item.repo }} --local-dir {{ llmkube_model_store }}/{{ item.repo }}"
+    creates: "{{ llmkube_model_store }}/{{ item.repo }}/config.json"
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  loop: "{{ llmkube_models }}"
+  loop_control:
+    label: "{{ item.repo }}"

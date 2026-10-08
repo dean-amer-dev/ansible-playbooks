@@ -1,0 +1,83 @@
+---
+# Role: llmkube-metal-agent
+# Runs the LLMKube Metal agent natively on the Mac mini (Metal GPU) and joins it to the
+# gmktec k3s cluster's LLMKube operator. Models are served by the oMLX (MLX) runtime.
+# Cluster side (ServiceAccount, RBAC, token Secret, Model/InferenceService objects) lives in
+# dean-tofu: k3s/infra/prod/llm-metal-agent and k3s/infra/prod/llm-models.
+
+# Must match the operator chart version pinned in dean-tofu k3s/infra/prod/llmkube/application.yaml.
+llmkube_agent_version: "0.10.1"
+llmkube_agent_arch: arm64
+llmkube_agent_url: "https://github.com/defilantech/LLMKube/releases/download/v{{ llmkube_agent_version }}/LLMKube-metal-agent_{{ llmkube_agent_version }}_darwin_{{ llmkube_agent_arch }}.tar.gz"
+llmkube_agent_checksums_url: "https://github.com/defilantech/LLMKube/releases/download/v{{ llmkube_agent_version }}/checksums.txt"
+llmkube_agent_bin: /usr/local/bin/llmkube-metal-agent
+
+llmkube_agent_label: com.llmkube.metal-agent
+llmkube_agent_plist: "/Library/LaunchDaemons/{{ llmkube_agent_label }}.plist"
+
+llmkube_agent_user: "{{ ansible_user | default('alex') }}"
+llmkube_agent_home: "/Users/{{ llmkube_agent_user }}"
+llmkube_homebrew_bin: /opt/homebrew/bin
+
+# Cluster join
+llmkube_namespace: llm
+llmkube_host_ip: "{{ macmini_ip }}"
+llmkube_api_server: "https://10.100.20.161:6443"        # kube-vip API VIP
+llmkube_token_secret: llmkube-metal-agent-token          # created by dean-tofu llm-metal-agent
+llmkube_control_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/dean.yaml"   # control node, read-only use
+llmkube_agent_kubeconfig: "{{ llmkube_agent_home }}/.kube/llmkube-metal-agent.yaml"
+
+# Ports: agent health/metrics, authenticated TLS ingress the cluster relay calls, oMLX daemon (loopback only).
+llmkube_agent_port: 9090
+llmkube_ingress_port: 9443
+llmkube_omlx_port: 8000
+
+# oMLX runtime: model dir doubles as the agent's --model-store.
+# Installed with uv (the jundot/omlx Homebrew formula fails to build its venv on this host).
+llmkube_omlx_version: "0.7.0"
+llmkube_omlx_bin: "{{ llmkube_agent_home }}/.local/bin/omlx"
+llmkube_model_store: "{{ llmkube_agent_home }}/.omlx/models"
+# Fraction of unified memory the agent lets models claim (16 GB mini; the rest is macOS + BlueBubbles).
+llmkube_memory_fraction: "0.67"
+
+# Homebrew: llama.cpp is a hard prerequisite of the agent even when it only serves oMLX models;
+# uv provides the Hugging Face downloader.
+llmkube_brew_packages:
+  - llama.cpp
+  - uv
+
+# MLX models to stage in the model store (the agent does not download MLX models). Each Hugging Face
+# repo lands at <llmkube_model_store>/<repo>; oMLX serves it under the directory's base name.
+llmkube_models: []
+
+# Directories (relative to the model store) from earlier layouts that must not linger: oMLX would
+# list a second copy of the same model.
+llmkube_model_store_stale:
+  - Qwen3.5-9B-MLX-4bit
+  - nomicai-modernbert-embed-base-8bit
+
+# --- Audio (Whisper STT): a second, standalone oMLX daemon outside LLMKube ---
+# LLMKube's relay only forwards chat/embeddings paths and warms models with a chat request, so STT
+# cannot go through an InferenceService. Clients call http://<mini>:8001/v1/audio/transcriptions directly.
+llmkube_audio_enabled: true
+llmkube_audio_label: com.local.omlx-audio
+llmkube_audio_plist: "/Library/LaunchDaemons/{{ llmkube_audio_label }}.plist"
+llmkube_audio_port: 8001
+llmkube_audio_base_path: "{{ llmkube_agent_home }}/.omlx-audio"
+llmkube_audio_model_dir: "{{ llmkube_audio_base_path }}/models"
+llmkube_audio_bws_secret_id: "6a8ca468-a9fa-495a-a59d-b4dd01791e6f"   # mini-omlx-audio-api-key
+# mlx-community Whisper repos ship only weights + config.json; oMLX needs the HF processor/tokenizer
+# files from the upstream repo copied alongside (small files only, not the upstream weights).
+llmkube_audio_models:
+  - repo: mlx-community/whisper-large-v3-turbo
+    processor_repo: openai/whisper-large-v3-turbo
+    processor_files:
+      - preprocessor_config.json
+      - tokenizer.json
+      - tokenizer_config.json
+      - special_tokens_map.json
+      - vocab.json
+      - merges.txt
+      - normalizer.json
+      - added_tokens.json
+      - generation_config.json
