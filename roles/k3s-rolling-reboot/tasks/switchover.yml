@@ -1,0 +1,33 @@
+---
+# The Postgres primary must not be on the node being drained: its PodDisruptionBudget would
+# block the drain, and a pod delete would be a failover rather than a clean switchover.
+- name: Require the kubectl-cnpg plugin
+  ansible.builtin.command: kubectl cnpg version
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Pick a healthy replica on another node
+  ansible.builtin.set_fact:
+    rolling_reboot_new_primary: "{{ rolling_reboot_gate_info.info.postgres_switchover_candidates | first }}"
+
+- name: Switch the Postgres primary to {{ rolling_reboot_new_primary }}
+  ansible.builtin.command: kubectl cnpg promote pg {{ rolling_reboot_new_primary }} -n postgres
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: Wait for the switchover to finish and the cluster to be healthy
+  ansible.builtin.command: >-
+    kubectl -n postgres get clusters.postgresql.cnpg.io pg
+    -o jsonpath={.status.currentPrimary}/{.status.targetPrimary}/{.status.phase}
+  delegate_to: localhost
+  become: false
+  register: rolling_reboot_switchover
+  until: rolling_reboot_switchover.stdout == rolling_reboot_new_primary ~ '/' ~ rolling_reboot_new_primary ~ '/Cluster in healthy state'
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Gate (pre) again after the switchover
+  ansible.builtin.include_tasks: gate_pre.yml

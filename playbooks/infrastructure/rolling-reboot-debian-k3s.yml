@@ -1,0 +1,26 @@
+---
+# Rolling reboot of the GMKtec k3s servers (group debian_k3s): ONE node at a time, each only
+# while the cluster is healthy and >= 2 healthy replicas of every replicated service stay up on
+# the other nodes. Drains and cordons the node, moves the Postgres primary off it first, reboots,
+# waits for Cilium, uncordons, then waits for every replica to catch up before the next node.
+# The first failure stops the whole run and leaves the remaining nodes untouched.
+#
+# No per-run permission needed (Alex, 2026-10-06): it is gated, and k3s tolerates one node down.
+# Never bypass or weaken the gate (see docs/debian-k3s/rolling-reboot.md). Run:
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/rolling-reboot-debian-k3s.yml \
+#       -e rolling_reboot_confirm=yes
+# Add --limit gmktec-2 to do a single node. --check is not supported (it cannot drain or reboot).
+# Prerequisites on the control host: kubectl, ~/.kube/dean.yaml, and kubectl-cnpg (only needed
+# when the Postgres primary sits on the node being rebooted).
+# No BWS_ACCESS_TOKEN needed: the play uses the existing ssh key and kubeconfig only.
+
+- name: Rolling reboot of the debian_k3s servers (one at a time, health-gated)
+  hosts: debian_k3s
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  environment:
+    PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  roles:
+    - role: "{{ playbook_dir }}/../../roles/k3s-rolling-reboot"

@@ -1,0 +1,172 @@
+---
+# Reboots ONE node; the playbook runs this with serial: 1 and any_errors_fatal, so the first
+# failure anywhere stops the whole rolling reboot and leaves later nodes untouched.
+# kubectl work runs on the control host (delegate_to localhost) against the API VIP.
+# Every run records timestamps and writes a timing summary (also when it stops early).
+
+- name: Refuse to run without explicit confirmation
+  ansible.builtin.assert:
+    that: rolling_reboot_confirm | bool
+    fail_msg: >-
+      This playbook reboots servers. Re-run with -e rolling_reboot_confirm=yes (a deliberate
+      flag so a bare or accidental run does nothing). See docs/debian-k3s/rolling-reboot.md.
+    quiet: true
+
+- name: Start a fresh record for {{ inventory_hostname }}
+  ansible.builtin.set_fact:
+    rolling_reboot_stamps: {}
+    rolling_reboot_run_dir: "{{ rolling_reboot_results_dir }}/{{ inventory_hostname }}-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+    rolling_reboot_gap_raw: ""
+
+- name: Create the run directory
+  ansible.builtin.file:
+    path: "{{ rolling_reboot_run_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+
+- ansible.builtin.include_tasks: stamp.yml
+  vars: {stamp_name: start}
+
+- name: Rolling reboot of {{ inventory_hostname }}
+  environment:
+    KUBECONFIG: "{{ rolling_reboot_kubeconfig }}"
+  block:
+    - name: Gate (pre) - cluster healthy and >= {{ rolling_reboot_min_healthy_replicas }} healthy replicas stay up elsewhere
+      ansible.builtin.include_tasks: gate_pre.yml
+
+    - name: Move the Postgres primary off this node first
+      ansible.builtin.include_tasks: switchover.yml
+      when: rolling_reboot_gate_info.info.postgres_primary_node | default('') == inventory_hostname
+
+    - name: Cordon {{ inventory_hostname }}
+      ansible.builtin.command: kubectl cordon {{ inventory_hostname }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: cordoned}
+
+    - name: Drain {{ inventory_hostname }} (honours PodDisruptionBudgets)
+      ansible.builtin.command: >-
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+        --force --timeout={{ rolling_reboot_drain_timeout }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: drained}
+
+    - name: Opt-in diagnostic - evict DaemonSet pods with a taint before the reboot
+      ansible.builtin.include_tasks: taint_apply.yml
+      when: rolling_reboot_bisect_taint | length > 0
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: reboot_cmd}
+
+    - name: Reboot {{ inventory_hostname }}
+      ansible.builtin.reboot:
+        msg: "rolling reboot by ansible (k3s-rolling-reboot)"
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+        reboot_timeout: "{{ rolling_reboot_reboot_timeout }}"
+        test_command: uptime
+      become: true
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: ssh_back}
+
+    # last journal line of the boot that just ended -> first kernel line of this boot (read-only)
+    - name: Read the shutdown-to-kernel gap from the journal
+      ansible.builtin.shell: |
+        set -o pipefail
+        last=$(journalctl -b -1 -n 1 -o short-unix --no-pager 2>/dev/null | awk 'NR==1{print $1}')
+        first=$(journalctl -b 0 -k -o short-unix --no-pager 2>/dev/null | awk 'NR==1{print $1}')
+        echo "$last $first"
+      args:
+        executable: /bin/bash
+      become: true
+      register: rolling_reboot_gap
+      changed_when: false
+      failed_when: false
+
+    - name: Remember the gap for the record
+      ansible.builtin.set_fact:
+        rolling_reboot_gap_raw: "{{ rolling_reboot_gap.stdout | default('') | trim }}"
+
+    - name: Wait for {{ inventory_hostname }} to be Ready
+      ansible.builtin.command: >-
+        kubectl wait --for=condition=Ready node/{{ inventory_hostname }}
+        --timeout={{ rolling_reboot_node_ready_timeout }}
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: node_ready}
+
+    - name: Opt-in diagnostic - Cilium stall probe (capture / envoy restart)
+      ansible.builtin.include_tasks: stall_probe.yml
+      when: rolling_reboot_stall_probe_seconds | int > 0
+
+    # Stay cordoned until the node's Cilium is healthy, so pods start into a working CNI.
+    - name: Wait for Cilium and its Envoy on {{ inventory_hostname }} to be Ready
+      ansible.builtin.command: >-
+        kubectl -n kube-system get pods -l k8s-app={{ item }}
+        --field-selector spec.nodeName={{ inventory_hostname }}
+        -o 'jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}'
+      loop: [cilium, cilium-envoy]
+      delegate_to: localhost
+      become: false
+      register: rolling_reboot_cilium
+      until: rolling_reboot_cilium.stdout | trim == 'True'
+      retries: "{{ rolling_reboot_cilium_retries }}"
+      delay: 20
+      changed_when: false
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: cilium_ready}
+
+    - name: Remove the diagnostic taint again before uncordoning
+      ansible.builtin.command: kubectl taint node {{ inventory_hostname }} bisect-
+      delegate_to: localhost
+      become: false
+      when: rolling_reboot_bisect_taint | length > 0
+      changed_when: true
+
+    - name: Uncordon {{ inventory_hostname }}
+      ansible.builtin.command: kubectl uncordon {{ inventory_hostname }}
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: uncordoned}
+
+    - name: Gate (post) - everything healthy again, all replicas caught up
+      ansible.builtin.include_tasks: gate_post.yml
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: post_ok}
+
+    - name: Write and print the timing summary
+      ansible.builtin.include_tasks: record.yml
+
+    - name: Let the cluster settle before the next node
+      ansible.builtin.pause:
+        seconds: "{{ rolling_reboot_settle_seconds }}"
+
+  rescue:
+    - name: Record how far this run got
+      ansible.builtin.include_tasks: record.yml
+
+    - name: Stop - leave everything as it is for a human
+      ansible.builtin.fail:
+        msg: >-
+          Rolling reboot stopped at {{ inventory_hostname }}. The node is left exactly as it was
+          at the failure (cordoned and/or drained, and still carrying the diagnostic taint if one
+          was set). No other node was touched. Timing so far is in {{ rolling_reboot_run_dir }}.
+          Check `kubectl get nodes` and the failed task above before doing anything else.

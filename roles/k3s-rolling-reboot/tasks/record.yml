@@ -1,0 +1,31 @@
+---
+- name: Build the timing record
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/record_result.py"
+      - --host
+      - "{{ inventory_hostname }}"
+      - --stamps
+      - "{{ rolling_reboot_stamps | to_json }}"
+      - --gap
+      - "{{ rolling_reboot_gap_raw | default('') }}"
+      - --options
+      - >-
+        {{ {'bisect_taint': rolling_reboot_bisect_taint,
+            'stall_probe_seconds': rolling_reboot_stall_probe_seconds | int,
+            'capture_on_stall': rolling_reboot_capture_on_stall | bool,
+            'envoy_restart_on_stall': rolling_reboot_envoy_restart_on_stall | bool} | to_json }}
+      - --capture-dir
+      - "{{ rolling_reboot_run_dir }}/capture"
+      - --out-dir
+      - "{{ rolling_reboot_run_dir }}"
+  delegate_to: localhost
+  become: false
+  register: rolling_reboot_record
+  changed_when: false
+  failed_when: false
+
+- name: Timing for {{ inventory_hostname }}
+  ansible.builtin.debug:
+    msg: "{{ rolling_reboot_record.stdout_lines | default(['(no record written)']) }}"

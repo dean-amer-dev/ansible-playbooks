@@ -1,0 +1,38 @@
+---
+# Opt-in shutdown-delay test: evict the DaemonSet pods that do not tolerate everything.
+- name: Require the diagnostic taint to be named bisect=...
+  ansible.builtin.assert:
+    that: rolling_reboot_bisect_taint is match('^bisect=')
+    fail_msg: "rolling_reboot_bisect_taint must start with 'bisect=' (the gate keys on it), got '{{ rolling_reboot_bisect_taint }}'"
+    quiet: true
+
+- ansible.builtin.include_tasks: stamp.yml
+  vars: {stamp_name: tainted}
+
+- name: "Taint {{ inventory_hostname }} with {{ rolling_reboot_bisect_taint }} (evicts non-tolerating DaemonSet pods)"
+  ansible.builtin.command: kubectl taint node {{ inventory_hostname }} {{ rolling_reboot_bisect_taint }} --overwrite
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: Give the evictions time to finish
+  ansible.builtin.pause:
+    seconds: "{{ rolling_reboot_bisect_taint_settle_seconds }}"
+
+- ansible.builtin.include_tasks: stamp.yml
+  vars: {stamp_name: taint_settled}
+
+- name: Record which pods remain on the node after the taint
+  ansible.builtin.command: kubectl get pods -A -o wide --field-selector spec.nodeName={{ inventory_hostname }}
+  delegate_to: localhost
+  become: false
+  register: rolling_reboot_pods_after_taint
+  changed_when: false
+
+- name: Save that list with the run's records
+  ansible.builtin.copy:
+    content: "{{ rolling_reboot_pods_after_taint.stdout }}\n"
+    dest: "{{ rolling_reboot_run_dir }}/pods-after-taint.txt"
+    mode: "0644"
+  delegate_to: localhost
+  become: false

@@ -1,0 +1,5 @@
+---
+# Record a timestamp (epoch seconds, control host clock) under the name in stamp_name.
+- name: "Stamp {{ stamp_name }}"
+  ansible.builtin.set_fact:
+    rolling_reboot_stamps: "{{ rolling_reboot_stamps | default({}) | combine({stamp_name: (lookup('pipe', 'date +%s.%N') | float)}) }}"

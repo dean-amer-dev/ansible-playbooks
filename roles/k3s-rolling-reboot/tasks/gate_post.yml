@@ -1,0 +1,23 @@
+---
+# Replicas on the rebooted node need time to catch up; keep asking until the whole cluster is
+# healthy again or the retries run out (then the play stops and leaves the rest alone).
+- name: Run the read-only health gate (post)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/cluster_health.py"
+      - --kubeconfig
+      - "{{ rolling_reboot_kubeconfig }}"
+      - --phase
+      - post
+      - --services
+      - "{{ rolling_reboot_replica_services | to_json }}"
+      - --ignore-pods
+      - "{{ rolling_reboot_ignore_pods | to_json }}"
+  delegate_to: localhost
+  become: false
+  register: rolling_reboot_gate_post
+  until: rolling_reboot_gate_post.rc == 0
+  retries: "{{ rolling_reboot_post_health_retries }}"
+  delay: 20
+  changed_when: false

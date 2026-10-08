@@ -1,0 +1,58 @@
+---
+# Opt-in Cilium stall probe (see defaults). Runs after the node is Ready.
+- name: "Wait {{ rolling_reboot_stall_probe_seconds }}s, then check whether every pod on the node is ready"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/node_pods.py"
+      - --kubeconfig
+      - "{{ rolling_reboot_kubeconfig }}"
+      - --node
+      - "{{ inventory_hostname }}"
+  delegate_to: localhost
+  become: false
+  register: rolling_reboot_probe
+  until: rolling_reboot_probe.rc == 0
+  retries: "{{ ((rolling_reboot_stall_probe_seconds | int) / 10) | round(0, 'ceil') | int }}"
+  delay: 10
+  failed_when: false
+  changed_when: false
+
+- ansible.builtin.include_tasks: stamp.yml
+  vars: {stamp_name: stall_checked}
+
+- name: Node pods are not all ready after the probe window - the Cilium stall
+  when: rolling_reboot_probe.rc != 0
+  block:
+    - name: Capture Cilium agent and Envoy state (read-only)
+      ansible.builtin.command:
+        argv:
+          - "{{ role_path }}/files/capture_cilium.sh"
+          - "{{ rolling_reboot_kubeconfig }}"
+          - "{{ inventory_hostname }}"
+          - "{{ rolling_reboot_run_dir }}/capture"
+      delegate_to: localhost
+      become: false
+      when: rolling_reboot_capture_on_stall | bool
+      changed_when: false
+
+    - name: Save which pods were stuck
+      ansible.builtin.copy:
+        content: "{{ rolling_reboot_probe.stdout }}\n"
+        dest: "{{ rolling_reboot_run_dir }}/stalled-pods.json"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Delete this node's cilium-envoy pod (upstream workaround; the DaemonSet recreates it)
+      ansible.builtin.command: >-
+        kubectl -n kube-system delete pod -l k8s-app=cilium-envoy
+        --field-selector spec.nodeName={{ inventory_hostname }}
+      delegate_to: localhost
+      become: false
+      when: rolling_reboot_envoy_restart_on_stall | bool
+      changed_when: true
+
+    - ansible.builtin.include_tasks: stamp.yml
+      vars: {stamp_name: envoy_deleted}
+      when: rolling_reboot_envoy_restart_on_stall | bool

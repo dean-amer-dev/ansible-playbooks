@@ -13,7 +13,7 @@ Server provisioning only:
 - **Ansible does not deploy services.** Deployment is Komodo (stateful) or ArgoCD (stateless).
 - **Ansible does not create Docker volumes.** Volumes are created by Docker on first compose start.
 - **Ansible does not create PostgreSQL databases.** Databases are created by Tofu via `provision_app`.
-- **An AI agent may run Ansible playbooks with Alex's explicit permission, granted per run — not a standing yes.** Never in CI pipelines or unattended agent code (see below).
+- **An AI agent may run Ansible playbooks with Alex's explicit permission, granted per run — not a standing yes.** Sole exception (Alex, 2026-10-06): the gated `playbooks/infrastructure/rolling-reboot-debian-k3s.yml`, which the agent may run without asking (see `docs/debian-k3s/rolling-reboot.md`). Never in CI pipelines or unattended agent code (see below).
 
 ## One secret input: BWS_ACCESS_TOKEN
 
@@ -66,4 +66,7 @@ BWS_ACCESS_TOKEN=<token> ansible-playbook -i inventory/ playbooks/<name>.yml
 An AI agent may run the same command instead, but only with Alex's explicit
 permission given in that session for that specific run — never inferred
 from a prior approval, and never automated. Never run playbooks in CI
-pipelines or from unattended agent code.
+pipelines or from unattended agent code. The one exception is
+`rolling-reboot-debian-k3s.yml`, which needs no per-run permission because
+it is gated (one node at a time, healthy cluster and >= 2 healthy replicas
+elsewhere required, stops on first failure); never bypass or weaken that gate.
