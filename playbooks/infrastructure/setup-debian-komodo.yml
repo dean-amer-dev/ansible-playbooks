@@ -33,7 +33,6 @@
     bws_token_durable_file: "{{ bws_token_dir }}/bws-access-token"
     komodo_periphery_service_name: "komodo-periphery"
     komodo_periphery_port: 8120
-    media_server_stack_enabled: true
 
   pre_tasks:
     - name: Stat existing BWS token on host (legacy path)
@@ -74,7 +73,7 @@
       ansible.builtin.set_fact:
         media_config_root_effective: "{{ lookup('vars', 'media_config_root', default='/mnt/storage/media/config') }}"
         media_data_root_effective: "{{ lookup('vars', 'media_data_root', default='/mnt/storage') }}"
-      tags: [debian-komodo, debian-media-dirs]
+      tags: [debian-komodo, debian-media-dirs, media-stack-dirs]
 
     # ─── System packages ───────────────────────────────────────────────────
     # Hosts previously set up with Docker CE (docker.com apt repo) keep
@@ -475,8 +474,8 @@
     # real had ever chowned it, and the container (which runs as uid 1000)
     # couldn't write to it. Provisioning these here instead — Ansible runs
     # directly on the host, not sandboxed — is the fix; this task must be
-    # kept in sync with pre-deploy.sh's `*_CONFIG_ROOT` list whenever a
-    # service is added to or removed from the SSD-config set.
+    # kept in sync with the config paths in amerenda/media-stack's paths.env
+    # whenever a service is added to or removed from the SSD-config set.
     - name: Pre-create SSD (/opt) media-server config dirs (owner 1000:1000)
       file:
         path: "{{ item }}"
@@ -503,7 +502,7 @@
       register: storage_mount
       changed_when: false
       failed_when: false
-      tags: [debian-komodo, debian-media-dirs]
+      tags: [debian-komodo, debian-media-dirs, media-stack-dirs]
 
     - name: Warn if /mnt/storage is not mounted
       debug:
@@ -512,7 +511,7 @@
           assumes a real disk is mounted there. Set this up out of band
           (parted/mkfs/fstab) before deploying the media-server stack.
       when: storage_mount.rc != 0
-      tags: [debian-komodo, debian-media-dirs]
+      tags: [debian-komodo, debian-media-dirs, media-stack-dirs]
 
     - name: Pre-create media-server data dirs (owner 1000:1000)
       file:
@@ -533,39 +532,32 @@
       when: storage_mount.rc == 0
       tags: [debian-komodo, debian-media-dirs]
 
-    # ─── Media-server stack (murderbot): render env and ensure running ──────
-    - name: Render media-server .env from BWS
-      ansible.builtin.shell: |
-        set -euo pipefail
-        BWS_ACCESS_TOKEN="$(cat '{{ bws_token_file }}')" bash murderbot/media-server/pre-deploy.sh
-      args:
-        chdir: "{{ compose_dir }}"
-        executable: /bin/bash
-      changed_when: true
-      when:
-        - media_server_stack_enabled | bool
-        - storage_mount.rc == 0
-      tags: [debian-komodo, debian-media-stack]
-
-    - name: Start media-server stack
-      ansible.builtin.shell: docker compose --env-file .env up -d --build
-      args:
-        chdir: "{{ compose_dir }}/murderbot/media-server"
-      changed_when: true
-      when:
-        - media_server_stack_enabled | bool
-        - storage_mount.rc == 0
-      tags: [debian-komodo, debian-media-stack]
-
-    - name: Wait for media-server HTTPS endpoint on :443
-      ansible.builtin.wait_for:
-        host: 127.0.0.1
-        port: 443
-        timeout: 90
-      when:
-        - media_server_stack_enabled | bool
-        - storage_mount.rc == 0
-      tags: [debian-komodo, debian-media-stack]
+    # Host dirs for amerenda/media-stack (Komodo stack "media-server") that its
+    # compose.yaml bind-mounts but nothing else creates. media-stack's
+    # pre-deploy.sh only hydrates secrets, so every dir lives here. Paths
+    # mirror media-stack/paths.env. bookorbit/postgres is uid/gid 999 because
+    # the pgvector image hard-codes that user and ignores PUID/PGID.
+    # Modes are only set on dirs this task owns; calibre-library keeps its mode.
+    - name: Pre-create media-stack service and library dirs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default('1000') }}"
+        group: "{{ item.group | default('1000') }}"
+        mode: "{{ item.mode | default(omit) }}"
+      loop:
+        - { path: "{{ media_config_root_effective }}/calibre/config", mode: "0755" }
+        - { path: "{{ media_config_root_effective }}/bookorbit", mode: "0755" }
+        - { path: "{{ media_config_root_effective }}/bookorbit/data", mode: "0755" }
+        - { path: "{{ media_config_root_effective }}/bookorbit/imports", mode: "0755" }
+        - { path: "{{ media_config_root_effective }}/bookorbit/postgres", owner: "999", group: "999", mode: "0700" }
+        - { path: "{{ media_data_root_effective }}/books/library", mode: "0755" }
+        - { path: "{{ media_data_root_effective }}/books/library/ebooks", mode: "0755" }
+        - { path: "{{ media_data_root_effective }}/books/library/audiobooks", mode: "0755" }
+        - { path: "{{ media_data_root_effective }}/books/library/comics", mode: "0755" }
+        - { path: "{{ media_data_root_effective }}/books/calibre-library" }
+      when: storage_mount.rc == 0
+      tags: [debian-komodo, debian-media-dirs, media-stack-dirs]
 
     # ─── Komodo Core: sync Variable to BWS passkey (fixes "Not Okay" / Invalid passkey) ─
     # Periphery already uses komodo-dean-passkey from BWS. Core must send the same
