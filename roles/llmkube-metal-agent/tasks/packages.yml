@@ -1,0 +1,31 @@
+---
+- name: Install Homebrew packages
+  community.general.homebrew:
+    name: "{{ item }}"
+    state: present
+    path: "{{ llmkube_homebrew_bin }}"
+  loop: "{{ llmkube_brew_packages }}"
+
+- name: List uv-installed tools
+  ansible.builtin.command: "{{ llmkube_homebrew_bin }}/uv tool list"
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  register: llmkube_uv_tools
+  changed_when: false
+
+- name: Install the Hugging Face CLI
+  ansible.builtin.command: "{{ llmkube_homebrew_bin }}/uv tool install 'huggingface_hub[cli]'"
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  when: "'huggingface-hub' not in llmkube_uv_tools.stdout"
+  changed_when: true
+
+- name: Install oMLX at the pinned version
+  ansible.builtin.command: >-
+    {{ llmkube_homebrew_bin }}/uv tool install --force --python 3.12
+    'omlx @ git+https://github.com/jundot/omlx@v{{ llmkube_omlx_version }}'
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  when: "('omlx v' ~ llmkube_omlx_version) not in llmkube_uv_tools.stdout"
+  changed_when: true
+  notify: Restart llmkube metal agent

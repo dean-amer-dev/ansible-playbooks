@@ -1,0 +1,15 @@
+# Mac Mini M4: LLMKube Metal agent + oMLX (MLX) model serving, joined to the k3s LLMKube operator.
+# Idempotent: converges to "agent installed at the pinned version, models staged, LaunchDaemon loaded".
+#
+# Prerequisites (cluster side, dean-tofu): k3s/infra/prod/llm-metal-agent applied (ServiceAccount + token
+# Secret) and k3s/infra/prod/llmkube allowing the model store in modelSource.allowedHostPathRoots.
+# Reads the ServiceAccount token from the cluster using the control node's ~/.kube/dean.yaml.
+#
+# Run:
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-macmini-llmkube.yml --limit mac-mini-m4
+
+- name: Run the LLMKube Metal agent on the Mac Mini M4
+  hosts: macmini_hosts
+  gather_facts: true
+  roles:
+    - role: "{{ playbook_dir }}/../../roles/llmkube-metal-agent"

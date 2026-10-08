@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ llmkube_agent_label }}</string>
+    <key>UserName</key>
+    <string>{{ llmkube_agent_user }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ llmkube_agent_bin }}</string>
+        <string>--namespace</string>
+        <string>{{ llmkube_namespace }}</string>
+        <string>--runtime</string>
+        <string>omlx</string>
+        <string>--omlx-bin</string>
+        <string>{{ llmkube_omlx_bin }}</string>
+        <string>--omlx-port</string>
+        <string>{{ llmkube_omlx_port }}</string>
+        <string>--llama-server</string>
+        <string>{{ llmkube_homebrew_bin }}/llama-server</string>
+        <string>--model-store</string>
+        <string>{{ llmkube_model_store }}</string>
+        <string>--kubeconfig</string>
+        <string>{{ llmkube_agent_kubeconfig }}</string>
+        <string>--host-ip</string>
+        <string>{{ llmkube_host_ip }}</string>
+        <string>--port</string>
+        <string>{{ llmkube_agent_port }}</string>
+        <string>--ingress-port</string>
+        <string>{{ llmkube_ingress_port }}</string>
+        <string>--memory-fraction</string>
+        <string>{{ llmkube_memory_fraction }}</string>
+        <string>--log-level</string>
+        <string>info</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{{ llmkube_agent_home }}/Library/Logs/llmkube/metal-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ llmkube_agent_home }}/Library/Logs/llmkube/metal-agent.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{ llmkube_agent_home }}</string>
+        <key>PATH</key>
+        <string>{{ llmkube_homebrew_bin }}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>{{ llmkube_agent_home }}</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

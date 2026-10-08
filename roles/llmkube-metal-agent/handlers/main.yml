@@ -1,0 +1,10 @@
+---
+- name: Restart llmkube metal agent
+  ansible.builtin.command: "launchctl kickstart -k system/{{ llmkube_agent_label }}"
+  become: true
+  changed_when: true
+
+- name: Restart omlx audio daemon
+  ansible.builtin.command: "launchctl kickstart -k system/{{ llmkube_audio_label }}"
+  become: true
+  changed_when: true

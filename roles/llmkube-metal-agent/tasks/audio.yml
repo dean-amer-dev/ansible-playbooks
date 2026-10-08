@@ -1,0 +1,87 @@
+---
+- name: Fail fast if the BWS token is missing
+  ansible.builtin.assert:
+    that: lookup('env', 'BWS_ACCESS_TOKEN') != ''
+    fail_msg: "BWS_ACCESS_TOKEN must be set in the environment"
+  delegate_to: localhost
+  become: false
+
+- name: Fetch the audio API key from Bitwarden Secrets Manager
+  ansible.builtin.command: "bws secret get {{ llmkube_audio_bws_secret_id }} --output json"
+  environment:
+    BWS_ACCESS_TOKEN: "{{ lookup('env', 'BWS_ACCESS_TOKEN') }}"
+  delegate_to: localhost
+  become: false
+  register: llmkube_audio_secret
+  changed_when: false
+  no_log: true
+
+- name: Create the audio model directory
+  ansible.builtin.file:
+    path: "{{ llmkube_audio_model_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Download audio models from Hugging Face
+  ansible.builtin.command:
+    cmd: "{{ llmkube_agent_home }}/.local/bin/hf download {{ item.repo }} --local-dir {{ llmkube_audio_model_dir }}/{{ item.repo | basename }}"
+    creates: "{{ llmkube_audio_model_dir }}/{{ item.repo | basename }}/config.json"
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  loop: "{{ llmkube_audio_models }}"
+  loop_control:
+    label: "{{ item.repo }}"
+
+- name: Add upstream processor/tokenizer files to audio models
+  ansible.builtin.command:
+    cmd: >-
+      {{ llmkube_agent_home }}/.local/bin/hf download {{ item.processor_repo }} {{ item.processor_files | join(' ') }}
+      --local-dir {{ llmkube_audio_model_dir }}/{{ item.repo | basename }}
+    creates: "{{ llmkube_audio_model_dir }}/{{ item.repo | basename }}/{{ item.processor_files | first }}"
+  environment:
+    HOME: "{{ llmkube_agent_home }}"
+  loop: "{{ llmkube_audio_models }}"
+  loop_control:
+    label: "{{ item.repo }}"
+  when: item.processor_repo is defined
+  notify: Restart omlx audio daemon
+
+- name: Install the audio LaunchDaemon (holds the API key, so root-only)
+  ansible.builtin.template:
+    src: com.local.omlx-audio.plist.j2
+    dest: "{{ llmkube_audio_plist }}"
+    owner: root
+    group: wheel
+    mode: "0600"
+  become: true
+  no_log: true
+  register: llmkube_audio_plist_result
+
+- name: Check whether the audio LaunchDaemon is loaded
+  ansible.builtin.command: "launchctl print system/{{ llmkube_audio_label }}"
+  become: true
+  register: llmkube_audio_loaded
+  failed_when: false
+  changed_when: false
+
+- name: Load the audio LaunchDaemon
+  ansible.builtin.command: "launchctl bootstrap system {{ llmkube_audio_plist }}"
+  become: true
+  when: llmkube_audio_loaded.rc != 0
+  changed_when: true
+
+- name: Restart the audio daemon after a definition change
+  ansible.builtin.command: "launchctl kickstart -k system/{{ llmkube_audio_label }}"
+  become: true
+  when: llmkube_audio_plist_result.changed and llmkube_audio_loaded.rc == 0
+  changed_when: true
+
+- name: Wait for the audio daemon to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llmkube_audio_port }}/health"
+    status_code: 200
+  register: llmkube_audio_health
+  until: llmkube_audio_health.status == 200
+  retries: 12
+  delay: 5
+  changed_when: false

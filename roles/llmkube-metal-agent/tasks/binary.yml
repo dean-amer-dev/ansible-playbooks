@@ -1,0 +1,44 @@
+---
+- name: Read the installed agent version
+  ansible.builtin.command: "{{ llmkube_agent_bin }} --version"
+  register: llmkube_agent_installed
+  failed_when: false
+  changed_when: false
+
+- name: Download and install the agent binary
+  when: llmkube_agent_version not in (llmkube_agent_installed.stdout | default('')) or llmkube_agent_installed.rc != 0
+  block:
+    - name: Create a download directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: llmkube-agent.
+      register: llmkube_download_dir
+
+    - name: Download the release tarball (checksum-verified)
+      ansible.builtin.get_url:
+        url: "{{ llmkube_agent_url }}"
+        dest: "{{ llmkube_download_dir.path }}/agent.tar.gz"
+        checksum: "sha256:{{ llmkube_agent_checksums_url }}"
+        mode: "0600"
+
+    - name: Unpack the agent binary (macOS bsdtar; unarchive needs GNU tar)
+      ansible.builtin.command:
+        cmd: "tar -xzf {{ llmkube_download_dir.path }}/agent.tar.gz -C {{ llmkube_download_dir.path }} llmkube-metal-agent"
+        creates: "{{ llmkube_download_dir.path }}/llmkube-metal-agent"
+
+    - name: Install the agent binary
+      ansible.builtin.copy:
+        src: "{{ llmkube_download_dir.path }}/llmkube-metal-agent"
+        dest: "{{ llmkube_agent_bin }}"
+        remote_src: true
+        owner: root
+        group: wheel
+        mode: "0755"
+      become: true
+      notify: Restart llmkube metal agent
+  always:
+    - name: Remove the download directory
+      ansible.builtin.file:
+        path: "{{ llmkube_download_dir.path }}"
+        state: absent
+      when: llmkube_download_dir.path is defined
