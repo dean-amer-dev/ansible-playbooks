@@ -56,6 +56,10 @@ llmkube_model_store_stale:
   - Qwen3.5-9B-MLX-4bit
   - nomicai-modernbert-embed-base-8bit
 
+# Model ids (directory base names) pinned in oMLX's model_settings.json: loaded at oMLX start, never evicted.
+llmkube_omlx_pinned_models: []
+llmkube_omlx_base_path: "{{ llmkube_agent_home }}/.omlx"
+
 # --- Audio (Whisper STT): a second, standalone oMLX daemon outside LLMKube ---
 # LLMKube's relay only forwards chat/embeddings paths and warms models with a chat request, so STT
 # cannot go through an InferenceService. Clients call http://<mini>:8001/v1/audio/transcriptions directly.
@@ -66,10 +70,11 @@ llmkube_audio_port: 8001
 llmkube_audio_base_path: "{{ llmkube_agent_home }}/.omlx-audio"
 llmkube_audio_model_dir: "{{ llmkube_audio_base_path }}/models"
 llmkube_audio_bws_secret_id: "6a8ca468-a9fa-495a-a59d-b4dd01791e6f"   # mini-omlx-audio-api-key
-# mlx-community Whisper repos ship only weights + config.json; oMLX needs the HF processor/tokenizer
+# 4-bit Whisper (0.46 GB vs 1.6 GB fp16): leaves the 9B chat model room on the 16 GB mini, and is
+# plenty for short voice commands. mlx-community Whisper repos ship only weights + config.json; oMLX needs the HF processor/tokenizer
 # files from the upstream repo copied alongside (small files only, not the upstream weights).
 llmkube_audio_models:
-  - repo: mlx-community/whisper-large-v3-turbo
+  - repo: mlx-community/whisper-large-v3-turbo-4bit
     processor_repo: openai/whisper-large-v3-turbo
     processor_files:
       - preprocessor_config.json
@@ -81,3 +86,8 @@ llmkube_audio_models:
       - normalizer.json
       - added_tokens.json
       - generation_config.json
+# Audio model directories from earlier layouts; oMLX serves every directory it finds.
+llmkube_audio_model_stale:
+  - whisper-large-v3-turbo
+# Every audio model is pinned: loaded when the daemon starts, so a voice command never waits for a load.
+llmkube_audio_pinned_models: "{{ llmkube_audio_models | map(attribute='repo') | map('basename') | list }}"

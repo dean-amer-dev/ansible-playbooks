@@ -14,6 +14,7 @@
   become: false
   register: llmkube_audio_secret
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Create the audio model directory
@@ -21,6 +22,13 @@
     path: "{{ llmkube_audio_model_dir }}"
     state: directory
     mode: "0700"
+
+- name: Remove audio model directories from earlier layouts
+  ansible.builtin.file:
+    path: "{{ llmkube_audio_model_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ llmkube_audio_model_stale }}"
+  notify: Restart omlx audio daemon
 
 - name: Download audio models from Hugging Face
   ansible.builtin.command:
@@ -31,6 +39,7 @@
   loop: "{{ llmkube_audio_models }}"
   loop_control:
     label: "{{ item.repo }}"
+  notify: Restart omlx audio daemon
 
 - name: Add upstream processor/tokenizer files to audio models
   ansible.builtin.command:
@@ -44,6 +53,19 @@
   loop_control:
     label: "{{ item.repo }}"
   when: item.processor_repo is defined
+  notify: Restart omlx audio daemon
+
+- name: Pin the audio models
+  ansible.builtin.include_tasks: model_settings.yml
+  vars:
+    llmkube_ms_base_path: "{{ llmkube_audio_base_path }}"
+    llmkube_ms_pinned: "{{ llmkube_audio_pinned_models }}"
+
+- name: Restart the audio daemon so the pins take effect
+  ansible.builtin.debug:
+    msg: "audio model_settings.json changed; restarting the audio daemon"
+  when: llmkube_model_settings_result is changed
+  changed_when: true
   notify: Restart omlx audio daemon
 
 - name: Install the audio LaunchDaemon (holds the API key, so root-only)
@@ -75,6 +97,9 @@
   become: true
   when: llmkube_audio_plist_result.changed and llmkube_audio_loaded.rc == 0
   changed_when: true
+
+- name: Apply pending audio daemon restarts now
+  ansible.builtin.meta: flush_handlers
 
 - name: Wait for the audio daemon to answer
   ansible.builtin.uri:
