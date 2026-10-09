@@ -20,3 +20,23 @@
   loop: "{{ llmkube_models }}"
   loop_control:
     label: "{{ item.repo }}"
+
+- name: Read the model list oMLX is serving
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llmkube_omlx_port }}/v1/models"
+    return_content: true
+  register: llmkube_omlx_served
+  failed_when: false
+  changed_when: false
+
+- name: Restart the agent (and its oMLX) when a staged model is not being served yet
+  ansible.builtin.debug:
+    msg: "oMLX is not serving {{ item.repo | basename }}; restarting the agent so it rescans the model store"
+  when:
+    - llmkube_omlx_served.status | default(0) == 200
+    - (llmkube_omlx_served.json.data | map(attribute='id') | list) is not contains(item.repo | basename)
+  changed_when: true
+  loop: "{{ llmkube_models }}"
+  loop_control:
+    label: "{{ item.repo }}"
+  notify: Restart llmkube metal agent
