@@ -92,3 +92,5 @@ runner_bws_secrets:
 llmkube_models:
   - repo: mlx-community/Qwen3.5-9B-MLX-4bit
   - repo: mlx-community/nomicai-modernbert-embed-base-8bit
+  # Uncensored chat model, swapped in for Qwen3.5-9B by scaling the InferenceServices (only one fits the agent's memory budget at a time).
+  - repo: TheCluster/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-MLX-mxfp4
