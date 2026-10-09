@@ -94,3 +94,7 @@ llmkube_models:
   - repo: mlx-community/nomicai-modernbert-embed-base-8bit
   # Uncensored chat model, swapped in for Qwen3.5-9B by scaling the InferenceServices (only one fits the agent's memory budget at a time).
   - repo: TheCluster/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-MLX-mxfp4
+# Pinned models load when oMLX starts and are never evicted. The embedder is pinned so loading the 9B
+# cannot push it out; the 9B stays unpinned so LLMKube can unload it when its InferenceService scales to 0.
+llmkube_omlx_pinned_models:
+  - nomicai-modernbert-embed-base-8bit

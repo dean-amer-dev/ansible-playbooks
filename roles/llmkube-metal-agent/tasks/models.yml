@@ -40,3 +40,16 @@
   loop_control:
     label: "{{ item.repo }}"
   notify: Restart llmkube metal agent
+
+- name: Pin models in the agent's oMLX
+  ansible.builtin.include_tasks: model_settings.yml
+  vars:
+    llmkube_ms_base_path: "{{ llmkube_omlx_base_path }}"
+    llmkube_ms_pinned: "{{ llmkube_omlx_pinned_models }}"
+
+- name: Restart the agent (and its oMLX) so the pins take effect
+  ansible.builtin.debug:
+    msg: "oMLX model_settings.json changed; restarting the agent"
+  when: llmkube_model_settings_result is changed
+  changed_when: true
+  notify: Restart llmkube metal agent

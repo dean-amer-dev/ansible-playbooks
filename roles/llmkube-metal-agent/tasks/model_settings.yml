@@ -1,0 +1,28 @@
+---
+# Pins models in an oMLX instance's model_settings.json. oMLX's admin UI writes the same file, so only
+# the is_pinned keys are merged in; everything else is kept. oMLX reads the file at start, so the caller
+# restarts the daemon when llmkube_model_settings_result changed.
+# Inputs: llmkube_ms_base_path (the oMLX --base-path), llmkube_ms_pinned (list of model ids).
+
+- name: Read {{ llmkube_ms_base_path }}/model_settings.json
+  ansible.builtin.slurp:
+    src: "{{ llmkube_ms_base_path }}/model_settings.json"
+  register: llmkube_ms_current_raw
+  failed_when: false
+
+- name: Compute the pinned model settings
+  ansible.builtin.set_fact:
+    llmkube_ms_current: "{{ (llmkube_ms_current_raw.content | b64decode | from_json) if llmkube_ms_current_raw.content is defined else {'version': 1, 'models': {}} }}"
+    llmkube_ms_pins: "{{ dict(llmkube_ms_pinned | product([{'is_pinned': true}])) }}"
+
+- name: Merge the pins into the current settings
+  ansible.builtin.set_fact:
+    llmkube_ms_desired: "{{ llmkube_ms_current | combine({'models': llmkube_ms_pins}, recursive=True) }}"
+
+- name: Write {{ llmkube_ms_base_path }}/model_settings.json
+  ansible.builtin.copy:
+    content: "{{ llmkube_ms_desired | to_nice_json(indent=2) }}\n"
+    dest: "{{ llmkube_ms_base_path }}/model_settings.json"
+    mode: "0600"
+  when: llmkube_ms_desired != llmkube_ms_current
+  register: llmkube_model_settings_result
