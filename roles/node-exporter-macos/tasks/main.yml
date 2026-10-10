@@ -1,0 +1,92 @@
+---
+- name: Read the installed node_exporter version
+  ansible.builtin.command: "{{ node_exporter_bin }} --version"
+  register: node_exporter_installed
+  failed_when: false
+  changed_when: false
+
+- name: Download and install the node_exporter binary
+  when: node_exporter_version not in ((node_exporter_installed.stdout | default('')) + (node_exporter_installed.stderr | default(''))) or node_exporter_installed.rc != 0
+  block:
+    - name: Create a download directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: node-exporter.
+      register: node_exporter_download_dir
+
+    - name: Download the release tarball (checksum-verified)
+      ansible.builtin.get_url:
+        url: "{{ node_exporter_url }}"
+        dest: "{{ node_exporter_download_dir.path }}/node_exporter.tar.gz"
+        checksum: "sha256:{{ node_exporter_checksums_url }}"
+        mode: "0600"
+
+    - name: Unpack the binary (macOS bsdtar; unarchive needs GNU tar)
+      ansible.builtin.command:
+        cmd: >-
+          tar -xzf {{ node_exporter_download_dir.path }}/node_exporter.tar.gz
+          -C {{ node_exporter_download_dir.path }} --strip-components=1
+          node_exporter-{{ node_exporter_version }}.darwin-{{ node_exporter_arch }}/node_exporter
+        creates: "{{ node_exporter_download_dir.path }}/node_exporter"
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "{{ node_exporter_download_dir.path }}/node_exporter"
+        dest: "{{ node_exporter_bin }}"
+        remote_src: true
+        owner: root
+        group: wheel
+        mode: "0755"
+      become: true
+      notify: Restart node exporter
+  always:
+    - name: Remove the download directory
+      ansible.builtin.file:
+        path: "{{ node_exporter_download_dir.path }}"
+        state: absent
+      when: node_exporter_download_dir.path is defined
+
+- name: Install the node_exporter LaunchDaemon
+  ansible.builtin.template:
+    src: com.prometheus.node-exporter.plist.j2
+    dest: "{{ node_exporter_plist }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  notify: Restart node exporter
+
+- name: Check whether the LaunchDaemon is loaded and running
+  ansible.builtin.command: "launchctl print system/{{ node_exporter_label }}"
+  become: true
+  register: node_exporter_loaded
+  failed_when: false
+  changed_when: false
+
+- name: (Re)load the LaunchDaemon when it is missing or not running
+  ansible.builtin.shell: |
+    launchctl bootout system/{{ node_exporter_label }} 2>/dev/null || true
+    launchctl bootstrap system {{ node_exporter_plist }}
+  become: true
+  when: node_exporter_loaded.rc != 0 or 'state = running' not in node_exporter_loaded.stdout
+  changed_when: true
+
+- name: Apply pending restarts now
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for metrics to be served
+  ansible.builtin.uri:
+    url: "http://{{ node_exporter_listen }}/metrics"
+    return_content: true
+  register: node_exporter_metrics
+  until: node_exporter_metrics.status == 200
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Assert the LLM-runner memory metrics are present
+  ansible.builtin.assert:
+    that:
+      - "'node_memory_wired_bytes' in node_exporter_metrics.content"
+      - "'node_cpu_seconds_total' in node_exporter_metrics.content"
+      - "'node_filesystem_avail_bytes' in node_exporter_metrics.content"

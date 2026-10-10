@@ -1,0 +1,28 @@
+---
+# Role: node-exporter-macos
+# Minimal node_exporter for the Mac mini "is my LLM runner healthy" dashboard (Grafana llm-runner-hardware).
+# Scraped by dean-tofu k3s/infra/prod/monitoring/scrapes.yaml (ScrapeConfig mac-mini-node, :9100).
+
+node_exporter_version: "1.12.1"
+node_exporter_arch: arm64
+node_exporter_url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.darwin-{{ node_exporter_arch }}.tar.gz"
+node_exporter_checksums_url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/sha256sums.txt"
+node_exporter_bin: /usr/local/bin/node_exporter
+
+node_exporter_label: com.prometheus.node-exporter
+node_exporter_plist: "/Library/LaunchDaemons/{{ node_exporter_label }}.plist"
+node_exporter_user: "{{ ansible_user | default('alex') }}"
+node_exporter_log: "/Users/{{ node_exporter_user }}/Library/Logs/node-exporter.log"
+node_exporter_listen: "{{ macmini_ip }}:9100"
+
+# Everything else is disabled: unified memory (wired/compressed/free), CPU, load, disk space and IO, network.
+node_exporter_collectors:
+  - cpu
+  - meminfo
+  - loadavg
+  - boottime
+  - filesystem
+  - diskstats
+  - netdev
+node_exporter_filesystem_mounts: '^/(System/Volumes/Data)?$'
+node_exporter_netdev_devices: '^(en0|lo0)$'

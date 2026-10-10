@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ node_exporter_label }}</string>
+    <key>UserName</key>
+    <string>{{ node_exporter_user }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ node_exporter_bin }}</string>
+        <string>--web.listen-address={{ node_exporter_listen }}</string>
+        <string>--web.disable-exporter-metrics</string>
+        <string>--collector.disable-defaults</string>
+{% for c in node_exporter_collectors %}
+        <string>--collector.{{ c }}</string>
+{% endfor %}
+        <string>--collector.filesystem.mount-points-include={{ node_exporter_filesystem_mounts }}</string>
+        <string>--collector.netdev.device-include={{ node_exporter_netdev_devices }}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{ node_exporter_log }}</string>
+    <key>StandardErrorPath</key>
+    <string>{{ node_exporter_log }}</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

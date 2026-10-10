@@ -1,0 +1,11 @@
+# Mac Mini M4: minimal node_exporter (cpu, unified memory, load, disk, network) for the LLM runner dashboard.
+# Idempotent: converges to "pinned node_exporter installed, LaunchDaemon loaded, serving :9100".
+#
+# Run:
+#   ansible-playbook -i inventory/inventory.ini playbooks/infrastructure/setup-macmini-node-exporter.yml --limit mac-mini-m4
+
+- name: Run a minimal node_exporter on the Mac Mini M4
+  hosts: macmini_hosts
+  gather_facts: false
+  roles:
+    - role: "{{ playbook_dir }}/../../roles/node-exporter-macos"
