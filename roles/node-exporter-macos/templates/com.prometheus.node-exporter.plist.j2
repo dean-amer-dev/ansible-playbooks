@@ -16,6 +16,7 @@
         <string>--collector.{{ c }}</string>
 {% endfor %}
         <string>--collector.filesystem.mount-points-include={{ node_exporter_filesystem_mounts }}</string>
+        <string>--collector.textfile.directory={{ node_exporter_textfile_dir }}</string>
         <string>--collector.netdev.device-include={{ node_exporter_netdev_devices }}</string>
     </array>
     <key>RunAtLoad</key>

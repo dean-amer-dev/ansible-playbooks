@@ -3,6 +3,15 @@
 - name: Restart node exporter
   ansible.builtin.shell: |
     launchctl bootout system/{{ node_exporter_label }} 2>/dev/null || true
+    sleep 2
     launchctl bootstrap system {{ node_exporter_plist }}
+  become: true
+  changed_when: true
+
+- name: Restart macmon
+  ansible.builtin.shell: |
+    launchctl bootout system/{{ macmon_label }} 2>/dev/null || true
+    sleep 2
+    launchctl bootstrap system {{ macmon_plist }}
   become: true
   changed_when: true

@@ -4,6 +4,7 @@
   register: node_exporter_installed
   failed_when: false
   changed_when: false
+  check_mode: false
 
 - name: Download and install the node_exporter binary
   when: node_exporter_version not in ((node_exporter_installed.stdout | default('')) + (node_exporter_installed.stderr | default(''))) or node_exporter_installed.rc != 0
@@ -13,6 +14,7 @@
         state: directory
         prefix: node-exporter.
       register: node_exporter_download_dir
+      check_mode: false
 
     - name: Download the release tarball (checksum-verified)
       ansible.builtin.get_url:
@@ -46,6 +48,15 @@
         state: absent
       when: node_exporter_download_dir.path is defined
 
+- name: Create the textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+
 - name: Install the node_exporter LaunchDaemon
   ansible.builtin.template:
     src: com.prometheus.node-exporter.plist.j2
@@ -62,10 +73,12 @@
   register: node_exporter_loaded
   failed_when: false
   changed_when: false
+  check_mode: false
 
 - name: (Re)load the LaunchDaemon when it is missing or not running
   ansible.builtin.shell: |
     launchctl bootout system/{{ node_exporter_label }} 2>/dev/null || true
+    sleep 2
     launchctl bootstrap system {{ node_exporter_plist }}
   become: true
   when: node_exporter_loaded.rc != 0 or 'state = running' not in node_exporter_loaded.stdout
@@ -85,8 +98,12 @@
   changed_when: false
 
 - name: Assert the LLM-runner memory metrics are present
+  when: not ansible_check_mode
   ansible.builtin.assert:
     that:
       - "'node_memory_wired_bytes' in node_exporter_metrics.content"
       - "'node_cpu_seconds_total' in node_exporter_metrics.content"
       - "'node_filesystem_avail_bytes' in node_exporter_metrics.content"
+
+- name: Install macmon and the LLM runner textfile collector
+  ansible.builtin.include_tasks: llm-runner-textfile.yml
