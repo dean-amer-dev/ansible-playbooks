@@ -1,0 +1,8 @@
+---
+# bootout + bootstrap (not kickstart): launchd keeps the loaded job definition, so plist edits only apply on reload.
+- name: Restart node exporter
+  ansible.builtin.shell: |
+    launchctl bootout system/{{ node_exporter_label }} 2>/dev/null || true
+    launchctl bootstrap system {{ node_exporter_plist }}
+  become: true
+  changed_when: true
