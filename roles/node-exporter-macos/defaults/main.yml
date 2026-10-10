@@ -24,5 +24,29 @@ node_exporter_collectors:
   - filesystem
   - diskstats
   - netdev
+  - textfile
 node_exporter_filesystem_mounts: '^/(System/Volumes/Data)?$'
 node_exporter_netdev_devices: '^(en0|lo0)$'
+
+# Textfile collector: macmon (GPU/ANE power, clocks, temps) and oMLX engine state, written by a root LaunchDaemon.
+node_exporter_textfile_dir: /usr/local/var/node_exporter/textfile
+macmon_version: "0.9.0"
+macmon_sha256: "539d8a39dc4c3823d68410de1c270289790826d983b005b91b2a4441008108bb"
+macmon_url: "https://github.com/vladkens/macmon/releases/download/v{{ macmon_version }}/macmon-v{{ macmon_version }}.tar.gz"
+macmon_bin: /usr/local/bin/macmon
+macmon_label: com.local.macmon
+macmon_plist: "/Library/LaunchDaemons/{{ macmon_label }}.plist"
+macmon_listen_host: 127.0.0.1
+macmon_port: 9191
+macmon_log: "/Users/{{ node_exporter_user }}/Library/Logs/macmon.log"
+
+llm_collector_label: com.local.llm-runner-textfile
+llm_collector_plist: "/Library/LaunchDaemons/{{ llm_collector_label }}.plist"
+llm_collector_script: /usr/local/libexec/llm-runner-textfile.py
+llm_collector_keyfile: /usr/local/etc/llm-runner-textfile.audio-key
+llm_collector_interval: 30
+llm_collector_log: "/Users/{{ node_exporter_user }}/Library/Logs/llm-runner-textfile.log"
+llm_collector_omlx_url: "http://127.0.0.1:8000"
+llm_collector_audio_url: "http://127.0.0.1:8001"
+llm_collector_agent_url: "http://127.0.0.1:9090"
+llm_collector_audio_bws_secret_id: "6a8ca468-a9fa-495a-a59d-b4dd01791e6f"   # mini-omlx-audio-api-key

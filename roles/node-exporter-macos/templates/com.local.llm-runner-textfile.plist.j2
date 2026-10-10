@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ llm_collector_label }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>{{ llm_collector_script }}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>{{ llm_collector_interval }}</integer>
+    <key>StandardOutPath</key>
+    <string>{{ llm_collector_log }}</string>
+    <key>StandardErrorPath</key>
+    <string>{{ llm_collector_log }}</string>
+</dict>
+</plist>

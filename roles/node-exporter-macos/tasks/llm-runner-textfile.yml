@@ -1,0 +1,176 @@
+---
+- name: Read the installed macmon version
+  ansible.builtin.command: "{{ macmon_bin }} --version"
+  register: macmon_installed
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Download and install the macmon binary
+  when: macmon_version not in ((macmon_installed.stdout | default('')) + (macmon_installed.stderr | default(''))) or macmon_installed.rc != 0
+  block:
+    - name: Create a download directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: macmon.
+      register: macmon_download_dir
+      check_mode: false
+
+    - name: Download the release tarball (pinned sha256)
+      ansible.builtin.get_url:
+        url: "{{ macmon_url }}"
+        dest: "{{ macmon_download_dir.path }}/macmon.tar.gz"
+        checksum: "sha256:{{ macmon_sha256 }}"
+        mode: "0600"
+
+    - name: Unpack the binary
+      ansible.builtin.command:
+        cmd: "tar -xzf {{ macmon_download_dir.path }}/macmon.tar.gz -C {{ macmon_download_dir.path }} macmon"
+        creates: "{{ macmon_download_dir.path }}/macmon"
+
+    - name: Install the binary
+      when: not ansible_check_mode
+      ansible.builtin.copy:
+        src: "{{ macmon_download_dir.path }}/macmon"
+        dest: "{{ macmon_bin }}"
+        remote_src: true
+        owner: root
+        group: wheel
+        mode: "0755"
+      become: true
+      notify: Restart macmon
+  always:
+    - name: Remove the download directory
+      ansible.builtin.file:
+        path: "{{ macmon_download_dir.path }}"
+        state: absent
+      when: macmon_download_dir.path is defined
+
+- name: Install the macmon LaunchDaemon
+  ansible.builtin.template:
+    src: com.local.macmon.plist.j2
+    dest: "{{ macmon_plist }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  notify: Restart macmon
+
+- name: Check whether the macmon LaunchDaemon is running
+  ansible.builtin.command: "launchctl print system/{{ macmon_label }}"
+  become: true
+  register: macmon_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: (Re)load the macmon LaunchDaemon when it is missing or not running
+  ansible.builtin.shell: |
+    launchctl bootout system/{{ macmon_label }} 2>/dev/null || true
+    sleep 2
+    launchctl bootstrap system {{ macmon_plist }}
+  become: true
+  when: macmon_loaded.rc != 0 or 'state = running' not in macmon_loaded.stdout
+  changed_when: true
+
+- name: Fail fast if the BWS token is missing
+  ansible.builtin.assert:
+    that: lookup('env', 'BWS_ACCESS_TOKEN') != ''
+    fail_msg: "BWS_ACCESS_TOKEN must be set in the environment"
+  delegate_to: localhost
+  become: false
+
+- name: Fetch the audio API key from Bitwarden Secrets Manager
+  ansible.builtin.command: "bws secret get {{ llm_collector_audio_bws_secret_id }} --output json"
+  environment:
+    BWS_ACCESS_TOKEN: "{{ lookup('env', 'BWS_ACCESS_TOKEN') }}"
+  delegate_to: localhost
+  become: false
+  register: llm_collector_audio_secret
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Create the collector key directory
+  ansible.builtin.file:
+    path: "{{ llm_collector_keyfile | dirname }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+
+- name: Store the audio API key for the collector (root-only)
+  ansible.builtin.copy:
+    content: "{{ (llm_collector_audio_secret.stdout | from_json).value }}"
+    dest: "{{ llm_collector_keyfile }}"
+    owner: root
+    group: wheel
+    mode: "0600"
+  become: true
+  no_log: true
+
+- name: Create the collector script directory
+  ansible.builtin.file:
+    path: "{{ llm_collector_script | dirname }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+
+- name: Install the collector script
+  ansible.builtin.template:
+    src: llm-runner-textfile.py.j2
+    dest: "{{ llm_collector_script }}"
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+
+- name: Install the collector LaunchDaemon
+  ansible.builtin.template:
+    src: com.local.llm-runner-textfile.plist.j2
+    dest: "{{ llm_collector_plist }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  register: llm_collector_plist_result
+
+- name: Check whether the collector LaunchDaemon is loaded
+  ansible.builtin.command: "launchctl print system/{{ llm_collector_label }}"
+  become: true
+  register: llm_collector_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: (Re)load the collector LaunchDaemon when it is missing or its definition changed
+  ansible.builtin.shell: |
+    launchctl bootout system/{{ llm_collector_label }} 2>/dev/null || true
+    sleep 2
+    launchctl bootstrap system {{ llm_collector_plist }}
+  become: true
+  when: llm_collector_loaded.rc != 0 or llm_collector_plist_result.changed
+  changed_when: true
+
+- name: Check the textfile has been written
+  ansible.builtin.stat:
+    path: "{{ node_exporter_textfile_dir }}/llm_runner.prom"
+  register: llm_collector_prom
+  when: not ansible_check_mode
+  until: llm_collector_prom.stat.exists
+  retries: 12
+  delay: 5
+
+- name: Assert the macmon and oMLX series are served by node_exporter
+  ansible.builtin.uri:
+    url: "http://{{ node_exporter_listen }}/metrics"
+    return_content: true
+  register: llm_collector_metrics
+  when: not ansible_check_mode
+  until: "'macmon_gpu_power_watts' in llm_collector_metrics.content and 'llm_runner_engine_up' in llm_collector_metrics.content"
+  retries: 12
+  delay: 5
+  changed_when: false

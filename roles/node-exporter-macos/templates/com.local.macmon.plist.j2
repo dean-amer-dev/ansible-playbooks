@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ macmon_label }}</string>
+    <key>UserName</key>
+    <string>{{ node_exporter_user }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ macmon_bin }}</string>
+        <string>serve</string>
+        <string>--host</string>
+        <string>{{ macmon_listen_host }}</string>
+        <string>--port</string>
+        <string>{{ macmon_port }}</string>
+        <string>--interval</string>
+        <string>5000</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{ macmon_log }}</string>
+    <key>StandardErrorPath</key>
+    <string>{{ macmon_log }}</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

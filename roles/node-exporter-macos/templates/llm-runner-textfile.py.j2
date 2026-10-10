@@ -1,0 +1,71 @@
+#!/usr/bin/python3
+# Writes {{ node_exporter_textfile_dir }}/llm_runner.prom atomically for node_exporter's textfile collector.
+import json
+import os
+import re
+import urllib.request
+
+OUT = "{{ node_exporter_textfile_dir }}/llm_runner.prom"
+KEYFILE = "{{ llm_collector_keyfile }}"
+ENGINES = (
+    ("omlx-main", "{{ llm_collector_omlx_url }}", None),
+    ("omlx-audio", "{{ llm_collector_audio_url }}", KEYFILE),
+)
+NUM_FIELDS = (
+    "models_loaded", "models_loading", "models_discovered", "active_requests", "waiting_requests",
+    "total_requests", "total_prompt_tokens", "total_completion_tokens", "total_cached_tokens",
+    "cache_efficiency", "avg_prefill_tps", "avg_generation_tps", "model_memory_used", "model_memory_max",
+    "uptime_seconds",
+)
+RELAY = re.compile(r"^(llmkube_metal_agent_memory_|memory_pressure_level|system_memory_|process_)")
+
+
+def get(url, key=None):
+    req = urllib.request.Request(url)
+    if key:
+        req.add_header("Authorization", "Bearer " + key)
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.read().decode()
+
+
+def esc(v):
+    return str(v).replace("\\", "\\\\").replace('"', '\\"')
+
+
+out = []
+for engine, base, keyfile in ENGINES:
+    key = None
+    try:
+        if keyfile:
+            with open(keyfile) as f:
+                key = f.read().strip()
+        st = json.loads(get(base + "/api/status", key))
+        up = 1
+    except Exception:
+        st, up = {}, 0
+    out.append('llm_runner_engine_up{engine="%s"} %d' % (engine, up))
+    for field in NUM_FIELDS:
+        if isinstance(st.get(field), (int, float)):
+            out.append('llm_runner_engine_%s{engine="%s"} %s' % (field, engine, st[field]))
+    for model in st.get("loaded_models") or []:
+        out.append('llm_runner_model_loaded{engine="%s",model="%s"} 1' % (engine, esc(model)))
+
+try:
+    for line in get("{{ llm_collector_agent_url }}/metrics").splitlines():
+        if RELAY.match(line):
+            out.append(line)
+except Exception:
+    pass
+
+try:
+    for line in get("http://{{ macmon_listen_host }}:{{ macmon_port }}/metrics").splitlines():
+        if line.startswith("macmon_"):
+            out.append(line)
+except Exception:
+    pass
+
+tmp = OUT + ".tmp"
+with open(tmp, "w") as f:
+    f.write("\n".join(out) + "\n")
+os.chmod(tmp, 0o644)
+os.replace(tmp, OUT)
